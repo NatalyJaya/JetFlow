@@ -33,6 +33,9 @@ class BuildStatusPanel(private val project: Project) : JPanel(BorderLayout()) {
             preferredSize = Dimension(300, 200)
         }
         add(scroll, BorderLayout.SOUTH)
+
+        // Register this instance so the checkin handler can reach it
+        instance = this
     }
 
     fun showRunning() = onEdt {
@@ -89,4 +92,8 @@ class BuildStatusPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun onEdt(block: () -> Unit) =
         ApplicationManager.getApplication().invokeLater(block)
+
+    companion object {
+        var instance: BuildStatusPanel? = null
+    }
 }
