@@ -170,6 +170,9 @@ class RockyWidget(
         setSpriteMode(SpriteMode.WALK)
         startBobAnimation()
 
+        // Registrar instancia para el CI poller
+        instance = this
+
         // Clic en Rocky (IDLE) → menú; clic en píldoras (CHOICE) → elección
         addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
