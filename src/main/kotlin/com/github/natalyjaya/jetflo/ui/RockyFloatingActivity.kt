@@ -54,6 +54,8 @@ class RockyFloatingActivity : ProjectActivity {
                 override fun componentResized(e: ComponentEvent?) = reposition()
             })
 
+            // --- FLUJO DE MENSAJES LENTO ---
+            // 1. Saludo inicial
             Timer(1500) {
                 rockyWidget.showMessage("Hi! I'm Rocky") {
                     Timer(2000) {
@@ -125,6 +127,7 @@ class RockyWidget(
         isVisible = false; isEnabled = false
         font = Font("SansSerif", Font.PLAIN, 12)
     }
+
     private val applyBtn = JButton("▶").apply {
         isVisible = false
         background = Color(88, 101, 242); foreground = Color.WHITE; isFocusPainted = false
@@ -306,7 +309,9 @@ class RockyWidget(
                         .filter { it.endsWith(".yml") || it.endsWith(".yaml") }
                         .map { it.removeSuffix(".yml").removeSuffix(".yaml") }
                 }
+
                 Thread.sleep(7000)
+
                 SwingUtilities.invokeLater {
                     if (phase == RockyPhase.CI) {
                         setSpriteMode(SpriteMode.STAND)
