@@ -31,21 +31,21 @@ class FlowBridgeMainPanel(project: Project) : JPanel() {
 
     init {
         val myPanel = panel {
-            group("Configuración de Credenciales") {
+            group("Credential Configuration") {
                 row("GitHub PAT:") {
-                    cell(tokenField).comment("Para GitHub Pages")
+                    cell(tokenField).comment("For GitHub Pages")
                 }
                 row("Render Hook:") {
                     cell(renderHookField).comment("URL de Deploy Hook de Render")
                 }
                 row {
-                    button("Guardar Configuración") {
+                    button("Save settings") {
                         val token = String(tokenField.password)
                         if (token.isNotBlank()) {
                             ApplicationManager.getApplication().executeOnPooledThread {
                                 AuthManager.saveToken(token)
                                 ApplicationManager.getApplication().invokeLater {
-                                    Messages.showInfoMessage("Configuración guardada correctamente.", "JetFlo")
+                                    Messages.showInfoMessage("Settings save correctly.", "JetFlo")
                                 }
                             }
                         }
@@ -55,9 +55,9 @@ class FlowBridgeMainPanel(project: Project) : JPanel() {
 
             separator()
 
-            group("Despliegue Rápido") {
+            group("Fast Deploy") {
                 row {
-                    label("Selecciona una plataforma para desplegar:").bold()
+                    label("Select one platform to deploy:").bold()
                 }
 
                 row {
@@ -66,7 +66,7 @@ class FlowBridgeMainPanel(project: Project) : JPanel() {
                         if (hookUrl.isNotBlank()) {
                             executeRenderDeploy(hookUrl)
                         } else {
-                            Messages.showErrorDialog("Por favor, introduce la URL del Hook de Render", "Error")
+                            Messages.showErrorDialog("Please enter the Render Hook URL", "Error")
                         }
                     }.applyToComponent {
                         icon = AllIcons.Nodes.PpWeb
@@ -95,7 +95,7 @@ class FlowBridgeMainPanel(project: Project) : JPanel() {
 
     private fun executeDeploy(platform: String) {
         Messages.showInfoMessage(
-            "Iniciando despliegue en $platform...\nRocky está preparando los paquetes.",
+            "Starting deployment on $platform...\nRocky is preparing the packages.",
             "JetFlo Deploy"
         )
     }
@@ -112,15 +112,15 @@ class FlowBridgeMainPanel(project: Project) : JPanel() {
                 client.newCall(request).execute().use { response ->
                     ApplicationManager.getApplication().invokeLater {
                         if (response.isSuccessful) {
-                            Messages.showInfoMessage("¡Despliegue en Render solicitado con éxito!", "Render Deploy")
+                            Messages.showInfoMessage("Render deployment requested successfully!", "Render Deploy")
                         } else {
-                            Messages.showErrorDialog("Error en Render: ${response.code}", "Error de Despliegue")
+                            Messages.showErrorDialog("Error in Render: ${response.code}", "Error in Deployment")
                         }
                     }
                 }
             } catch (e: Exception) {
                 ApplicationManager.getApplication().invokeLater {
-                    Messages.showErrorDialog("Error de red: ${e.message}", "Error Crítico")
+                    Messages.showErrorDialog("Network error: ${e.message}", "Critical Error")
                 }
             }
         }
