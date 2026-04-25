@@ -1,136 +1,212 @@
 package com.github.natalyjaya.jetflo.ui
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.wm.WindowManager
 import java.awt.*
 import java.awt.event.*
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import javax.swing.*
+import org.json.JSONArray
+
+private const val GITHUB_API_BASE = "https://api.github.com/repos/actions/starter-workflows/contents/ci"
+private const val GITHUB_RAW_BASE = "https://raw.githubusercontent.com/actions/starter-workflows/main/ci"
+
+// Variables de tamaño unificadas
+private const val WIDGET_W  = 200
+private const val WIDGET_H  = 220
+private const val ROCKY_W    = 80  // Asegúrate de que termine en Y
+private const val ROCKY_H    = 80
+private const val MARGIN     = 10
 
 class RockyFloatingActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
         SwingUtilities.invokeLater {
             val frame = WindowManager.getInstance().getFrame(project) ?: return@invokeLater
             val layeredPane = frame.layeredPane
-            val rockyWidget = RockyWidget()
+
+            val rockyWidget = RockyWidget(project)
             layeredPane.add(rockyWidget, JLayeredPane.PALETTE_LAYER)
 
             fun reposition() {
-                val fh = layeredPane.height
-                // Aumentamos el tamaño del widget para que quepan los botones de CI
-                val w = 250
-                val h = 220
-                rockyWidget.setBounds(20, fh - h - 40, w, h)
+                val lh = layeredPane.height
+                rockyWidget.setBounds(MARGIN, (lh - WIDGET_H - 40).coerceAtLeast(0), WIDGET_W, WIDGET_H)
             }
 
             reposition()
             layeredPane.addComponentListener(object : ComponentAdapter() {
                 override fun componentResized(e: ComponentEvent?) = reposition()
             })
+
+            // --- FLUJO DE MENSAJES LENTO ---
+            // 1. Saludo inicial
+            Timer(1500) {
+                rockyWidget.showMessage("Hi! I'm Rocky") {
+                    // 2. Segunda parte tras 2 segundos de pausa
+                    Timer(2000) {
+                        rockyWidget.showMessage("I'll help you with your CI.")
+                    }.apply { isRepeats = false; start() }
+                }
+            }.apply { isRepeats = false; start() }
         }
     }
 }
 
-class RockyWidget : JPanel() {
-    // Estados de Rocky
-    private enum class State { GREETING, ASKING_CI, FINISHED }
-    private var currentState = State.GREETING
-
-    private var bubbleText = ""
-    private var rockyPosX = 20f
-    private var velX = 0.5f
+class RockyWidget(private val project: Project) : JPanel(null) {
+    private var bubbleLines: List<String> = emptyList()
+    private var isTalking = false
     private var bobOffset = 0f
     private var bobDirection = 1
+    private var isLoading = false
+    private var visibleChars = 0
+    private var fullText = ""
 
-    // Componentes de UI
-    private val actionPanel = JPanel(GridLayout(4, 1, 2, 2)) // Panel para los botones de CI
+    private val rockyImage: Image? = javaClass.getResource("/icons/stand.png")?.let { ImageIcon(it).image }
 
-    private val imgStand = loadImage("/icons/stand.png")
-    private val imgWalk1 = loadImage("/icons/walkleft1.png")
-    private val imgWalk2 = loadImage("/icons/walkleft2.png")
-    private var frameCount = 0
+    private val stackCombo = JComboBox<String>().apply {
+        isVisible = false
+        isEnabled = false
+        font = Font("SansSerif", Font.PLAIN, 12)
+    }
 
-    private fun loadImage(path: String): Image? =
-        javaClass.getResource(path)?.let { ImageIcon(it).image }
+    private val applyBtn = JButton("▶").apply {
+        isVisible = false
+        background = Color(88, 101, 242)
+        foreground = Color.WHITE
+        isFocusPainted = false
+    }
 
     init {
         isOpaque = false
-        layout = null // Usamos layout nulo para posicionar la burbuja a mano
+        // Posicionamiento de UI
+        val comboY = WIDGET_H - ROCKY_H - 35
+        stackCombo.setBounds(0, comboY, WIDGET_W - 50, 30)
+        applyBtn.setBounds(WIDGET_W - 46, comboY, 44, 30)
 
-        // Configurar panel de botones (invisible al inicio)
-        actionPanel.isOpaque = false
-        setupCIButtons()
-        add(actionPanel)
+        add(stackCombo)
+        add(applyBtn)
 
-        // Iniciar secuencia
-        startRocky()
+        applyBtn.addActionListener { onApply() }
+        startBobAnimation()
+        loadStacksFromGitHub()
+    }
 
-        // Timer de animación
+    private fun startBobAnimation() {
         Timer(50) {
-            if (currentState != State.ASKING_CI) {
-                rockyPosX += velX
-                if (rockyPosX > 100f || rockyPosX < 0f) velX *= -1
-                bobOffset += bobDirection * 0.7f
-                if (bobOffset > 5f || bobOffset < -5f) bobDirection *= -1
-                frameCount++
+            if (!isTalking && !isLoading) {
+                bobOffset += bobDirection * 0.6f
+                if (bobOffset > 4f || bobOffset < -4f) bobDirection *= -1
+                repaint()
             }
-            repaint()
         }.start()
+    }
 
-        // Listener para clics manuales
-        addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent?) {
-                if (currentState == State.FINISHED) startRocky()
+    fun showMessage(text: String, onFinished: (() -> Unit)? = null) {
+        isTalking = true
+        fullText = text
+        visibleChars = 0
+
+        val typewriter = Timer(60, null) // Velocidad de escritura lenta (60ms)
+        typewriter.addActionListener {
+            if (visibleChars < fullText.length) {
+                visibleChars++
+                bubbleLines = fullText.substring(0, visibleChars).split("\n")
+                repaint()
+            } else {
+                (it.source as Timer).stop()
+                onFinished?.invoke()
+                // El mensaje se queda un tiempo antes de borrarse
+                Timer(3500) {
+                    if (fullText == text) {
+                        isTalking = false
+                        bubbleLines = emptyList()
+                        repaint()
+                    }
+                }.apply { isRepeats = false; start() }
             }
-        })
+        }
+        typewriter.start()
     }
 
-    private fun startRocky() {
-        currentState = State.GREETING
-        bubbleText = "Hi, I'm Rocky! 🐶"
-        actionPanel.isVisible = false
+    private fun loadStacksFromGitHub() {
+        Thread {
+            try {
+                val json = fetchUrl(GITHUB_API_BASE)
+                val names = JSONArray(json).let { arr ->
+                    (0 until arr.length()).map { arr.getJSONObject(it).getString("name") }
+                        .filter { it.endsWith(".yml") || it.endsWith(".yaml") }
+                        .map { it.removeSuffix(".yml").removeSuffix(".yaml") }
+                }
 
-        // A los 3 segundos, pregunta por el CI
-        Timer(3000) {
-            askForCI()
-        }.apply { isRepeats = false; start() }
+                // Esperamos 7 segundos para que dé tiempo a las presentaciones iniciales
+                Thread.sleep(7000)
+
+                SwingUtilities.invokeLater {
+                    stackCombo.removeAllItems()
+                    stackCombo.addItem("— Select a stack —")
+                    names.forEach { stackCombo.addItem(it) }
+
+                    stackCombo.isVisible = true
+                    applyBtn.isVisible = true
+                    stackCombo.isEnabled = true
+                    applyBtn.isEnabled = true
+
+                    showMessage("Nice! Stacks are ready.\nPick one to implement CI.")
+                    revalidate()
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater { showMessage("GitHub connection failed") }
+            }
+        }.apply { isDaemon = true; start() }
     }
 
-    private fun askForCI() {
-        currentState = State.ASKING_CI
-        bubbleText = "How do you want to implement CI?"
+    private fun onApply() {
+        val selected = stackCombo.selectedItem as? String ?: return
+        if (selected.startsWith("—")) return
+        isLoading = true
+        applyBtn.isEnabled = false
+        showMessage("Setting up $selected...")
 
-        // Posicionar el panel de botones justo encima de Rocky
-        actionPanel.setBounds(10, 10, 180, 100)
-        actionPanel.isVisible = true
-        revalidate()
-        repaint()
-    }
-
-    private fun setupCIButtons() {
-        val options = listOf("Django", "Java with Maven", "Java with Gradle", "Node.js (Extra)")
-        options.forEach { option ->
-            val btn = JButton(option).apply {
-                font = Font("SansSerif", Font.PLAIN, 10)
-                margin = Insets(2, 5, 2, 5)
-                isFocusable = false
-                addActionListener {
-                    selectCI(option)
+        Thread {
+            try {
+                val content = fetchUrl("$GITHUB_RAW_BASE/$selected.yml")
+                createWorkflowFile(content)
+                SwingUtilities.invokeLater {
+                    isLoading = false
+                    applyBtn.isEnabled = true
+                    showMessage("All set!\nCheck .github/workflows")
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater {
+                    isLoading = false
+                    applyBtn.isEnabled = true
+                    showMessage("Error downloading")
                 }
             }
-            actionPanel.add(btn)
+        }.apply { isDaemon = true; start() }
+    }
+
+    private fun createWorkflowFile(content: String) {
+        val basePath = project.basePath ?: return
+        val workflowDir = File("$basePath/.github/workflows").apply { mkdirs() }
+        val targetFile = File(workflowDir, "main.yml").apply { writeText(content) }
+
+        ApplicationManager.getApplication().invokeLater {
+            LocalFileSystem.getInstance().refreshAndFindFileByIoFile(targetFile)?.let { vf ->
+                VfsUtil.markDirtyAndRefresh(false, false, false, vf)
+            }
         }
     }
 
-    private fun selectCI(option: String) {
-        actionPanel.isVisible = false
-        bubbleText = "Great! Let's setup $option..."
-        currentState = State.FINISHED
-
-        Timer(3000) {
-            bubbleText = "Click me to restart"
-            repaint()
-        }.apply { isRepeats = false; start() }
+    private fun fetchUrl(urlStr: String): String {
+        val conn = URL(urlStr).openConnection() as HttpURLConnection
+        conn.setRequestProperty("User-Agent", "JetFlo-Plugin")
+        return conn.inputStream.bufferedReader().readText()
     }
 
     override fun paintComponent(g: Graphics) {
@@ -138,48 +214,32 @@ class RockyWidget : JPanel() {
         val g2 = g as Graphics2D
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
-        val rX = rockyPosX.toInt()
-        val rY = height - 90 + bobOffset.toInt()
+        val rX = (width - ROCKY_W) / 2
+        val rY = height - ROCKY_H - 4 + (if (!isTalking) bobOffset.toInt() else -2)
 
-        // Dibujar burbuja de fondo
-        drawSpeechBubble(g2, rX + 40, rY)
+        if (bubbleLines.isNotEmpty()) {
+            val pad = 12
+            g2.font = Font("SansSerif", Font.BOLD, 12)
+            val fm = g2.fontMetrics
+            val maxW = bubbleLines.maxOf { fm.stringWidth(it) }
+            val bW = maxW + pad * 2
+            val bH = bubbleLines.size * fm.height + pad * 2
+            val bX = (width - bW) / 2
+            val bY = if (stackCombo.isVisible) stackCombo.y - bH - 10 else rY - bH - 10
 
-        // Dibujar a Rocky
-        val currentImg = if ((frameCount / 6) % 2 == 0) imgWalk1 else imgWalk2
-        val img = if (currentState == State.ASKING_CI) imgStand else currentImg
+            g2.color = Color(255, 255, 255, 250)
+            g2.fillRoundRect(bX, bY, bW, bH, 18, 18)
+            g2.color = Color(88, 101, 242, 80)
+            g2.drawRoundRect(bX, bY, bW, bH, 18, 18)
 
-        if (img != null) {
-            if (velX > 0) g2.drawImage(img, rX + 80, rY, -80, 80, null)
-            else g2.drawImage(img, rX, rY, 80, 80, null)
+            g2.color = Color.BLACK
+            bubbleLines.forEachIndexed { i, line ->
+                g2.drawString(line, bX + (bW - fm.stringWidth(line)) / 2, bY + pad + fm.ascent + i * fm.height)
+            }
         }
-    }
 
-    private fun drawSpeechBubble(g2: Graphics2D, x: Int, y: Int) {
-        val fm = g2.fontMetrics
-        val padding = 12
-        val bw = 200
-        val bh = if (currentState == State.ASKING_CI) 130 else 40
-        val bx = x - bw / 2
-        val by = y - bh - 10
-
-        // Sombra
-        g2.color = Color(0, 0, 0, 30)
-        g2.fillRoundRect(bx + 2, by + 2, bw, bh, 15, 15)
-
-        // Cuerpo de la burbuja
-        g2.color = Color.WHITE
-        g2.fillRoundRect(bx, by, bw, bh, 15, 15)
-        g2.color = Color(180, 180, 180)
-        g2.drawRoundRect(bx, by, bw, bh, 15, 15)
-
-        // Texto
-        g2.color = Color.BLACK
-        g2.font = Font("SansSerif", Font.BOLD, 11)
-        g2.drawString(bubbleText, bx + 10, by + 20)
-
-        // Si estamos preguntando, movemos el panel de botones aquí
-        if (currentState == State.ASKING_CI) {
-            actionPanel.setLocation(bx + 10, by + 30)
+        if (rockyImage != null) {
+            g2.drawImage(rockyImage, rX, rY, ROCKY_W, ROCKY_H, null)
         }
     }
 }
