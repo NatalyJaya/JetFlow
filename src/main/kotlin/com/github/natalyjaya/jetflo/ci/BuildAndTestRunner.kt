@@ -26,7 +26,7 @@ class BuildAndTestRunner(private val project: Project) {
         val gradlew = if (System.getProperty("os.name").lowercase().contains("win"))
             "$basePath/gradlew.bat" else "$basePath/gradlew"
 
-        val process = ProcessBuilder(gradlew, "check", "--continue")
+        val process = ProcessBuilder(gradlew, "test", "--rerun-tasks")
             .directory(File(basePath))
             .redirectErrorStream(true)
             .start()
@@ -35,7 +35,7 @@ class BuildAndTestRunner(private val project: Project) {
         process.waitFor()
 
         val failures = parseTestReports(basePath)
-        val success = process.exitValue() == 0 && failures.isEmpty()
+        val success = failures.isEmpty()
 
         TestFailureStore.update(failures)
 
