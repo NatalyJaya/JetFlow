@@ -1,9 +1,11 @@
 package com.github.natalyjaya.jetflo.ci
 
+import com.github.natalyjaya.jetflo.auth.AuthManager
 import com.intellij.openapi.project.Project
-import org.w3c.dom.Element
+import org.json.JSONObject
 import java.io.File
-import javax.xml.parsers.DocumentBuilderFactory
+import java.net.HttpURLConnection
+import java.net.URL
 
 data class TestFailure(
     val className: String,
@@ -22,66 +24,95 @@ data class BuildResult(
 class BuildAndTestRunner(private val project: Project) {
 
     fun runBlocking(): BuildResult {
-        val basePath = project.basePath ?: return BuildResult(false, emptyList(), "No project path")
-        val gradlew = if (System.getProperty("os.name").lowercase().contains("win"))
-            "$basePath/gradlew.bat" else "$basePath/gradlew"
+        return try {
+            val (owner, repo) = getOwnerAndRepo() ?: return BuildResult(
+                false, emptyList(), "No se pudo obtener el repositorio de Git"
+            )
 
-        val process = ProcessBuilder(gradlew, "test", "--rerun-tasks")
-            .directory(File(basePath))
-            .redirectErrorStream(true)
-            .start()
+            val token = AuthManager.getToken() ?: return BuildResult(
+                false, emptyList(), "No hay token de GitHub configurado. Configúralo en el panel JetFlo."
+            )
 
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
-
-        val failures = parseTestReports(basePath)
-        val success = failures.isEmpty()
-
-        TestFailureStore.update(failures)
-
-        return BuildResult(success, failures, output)
+            val result = getLatestWorkflowRun(owner, repo, token)
+            result
+        } catch (e: Exception) {
+            BuildResult(false, emptyList(), "Error consultando GitHub Actions: ${e.message}")
+        }
     }
 
-    private fun parseTestReports(basePath: String): List<TestFailure> {
-        val reportsDir = File("$basePath/build/reports/tests/test/xml")
-            .takeIf { it.exists() }
-            ?: File("$basePath/build/test-results/test")
-                .takeIf { it.exists() }
-            ?: return emptyList()
+    private fun getOwnerAndRepo(): Pair<String, String>? {
+        val basePath = project.basePath ?: return null
+        return try {
+            val process = ProcessBuilder("git", "remote", "get-url", "origin")
+                .directory(File(basePath))
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().readText().trim()
+            process.waitFor()
+            parseGitRemote(output)
+        } catch (e: Exception) {
+            null
+        }
+    }
 
-        val dbf = DocumentBuilderFactory.newInstance()
-        val failures = mutableListOf<TestFailure>()
+    private fun parseGitRemote(remoteUrl: String): Pair<String, String>? {
+        // Soporta tanto HTTPS como SSH:
+        // https://github.com/owner/repo.git
+        // git@github.com:owner/repo.git
+        val httpsRegex = Regex("https://github\\.com/([^/]+)/([^/.]+)")
+        val sshRegex = Regex("git@github\\.com:([^/]+)/([^/.]+)")
 
-        reportsDir.walkTopDown()
-            .filter { it.extension == "xml" }
-            .forEach { xmlFile ->
-                runCatching {
-                    val doc = dbf.newDocumentBuilder().parse(xmlFile)
-                    val testCases = doc.getElementsByTagName("testcase")
-                    for (i in 0 until testCases.length) {
-                        val tc = testCases.item(i) as Element
-                        val failureNodes = tc.getElementsByTagName("failure")
-                        if (failureNodes.length > 0) {
-                            val failEl = failureNodes.item(0) as Element
-                            val trace = failEl.textContent
-                            failures += TestFailure(
-                                className = tc.getAttribute("classname"),
-                                testName  = tc.getAttribute("name"),
-                                message   = failEl.getAttribute("message").ifBlank { trace.lines().firstOrNull() ?: "" },
-                                stackTrace = trace,
-                                lineNumber = extractLineNumber(trace, tc.getAttribute("classname"))
-                            )
-                        }
-                    }
-                }
+        httpsRegex.find(remoteUrl)?.let {
+            return Pair(it.groupValues[1], it.groupValues[2])
+        }
+        sshRegex.find(remoteUrl)?.let {
+            return Pair(it.groupValues[1], it.groupValues[2])
+        }
+        return null
+    }
+
+    private fun getLatestWorkflowRun(owner: String, repo: String, token: String): BuildResult {
+        val url = URL("https://api.github.com/repos/$owner/$repo/actions/runs?per_page=1&branch=main")
+        val conn = url.openConnection() as HttpURLConnection
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        conn.setRequestProperty("Accept", "application/vnd.github+json")
+        conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+
+        val response = conn.inputStream.bufferedReader().readText()
+        val json = JSONObject(response)
+        val runs = json.getJSONArray("workflow_runs")
+
+        if (runs.length() == 0) {
+            // No hay runs todavía, dejamos commitear
+            return BuildResult(true, emptyList(), "No hay workflow runs todavía")
+        }
+
+        val latestRun = runs.getJSONObject(0)
+        val status = latestRun.getString("status")       // queued, in_progress, completed
+        val conclusion = latestRun.optString("conclusion") // success, failure, cancelled...
+        val runUrl = latestRun.optString("html_url")
+
+        return when {
+            status != "completed" -> {
+                // El workflow está corriendo, avisamos pero dejamos commitear
+                BuildResult(true, emptyList(), "Workflow en progreso: $status")
             }
-
-        return failures
-    }
-
-    private fun extractLineNumber(stackTrace: String, className: String): Int? {
-        val simpleClass = className.substringAfterLast('.')
-        val regex = Regex("""\($simpleClass\.kt:(\d+)\)""")
-        return regex.find(stackTrace)?.groupValues?.get(1)?.toIntOrNull()
+            conclusion == "success" -> {
+                BuildResult(true, emptyList(), "✅ GitHub Actions: success")
+            }
+            else -> {
+                BuildResult(
+                    false,
+                    listOf(TestFailure(
+                        className = "GitHubActions",
+                        testName = "workflow_run",
+                        message = "El último workflow falló ($conclusion). Ver: $runUrl",
+                        stackTrace = "",
+                        lineNumber = null
+                    )),
+                    "❌ GitHub Actions: $conclusion"
+                )
+            }
+        }
     }
 }

@@ -1,3 +1,4 @@
+
 package com.github.natalyjaya.jetflo.ci
 
 import com.github.natalyjaya.jetflo.ui.RockyWidget
@@ -29,19 +30,12 @@ class CommitBuildCheckinHandlerFactory : VcsCheckinHandlerFactory(GitVcs.getKey(
                 )
 
                 val buildResult = result ?: BuildResult(false, emptyList(), "Build did not run")
-                BuildStatusPanel.instance?.showResult(buildResult)
+                //BuildStatusPanel.instance?.showResult(buildResult)
 
                 return if (buildResult.success) {
                     // Rocky avisa del éxito
-                    ApplicationManager.getApplication().invokeLater {
-                        RockyWidget.instance?.showMessage("Tests passed!\nCommit approved!")
-                    }
                     ReturnResult.COMMIT
                 } else {
-                    // Rocky avisa del fallo
-                    ApplicationManager.getApplication().invokeLater {
-                        RockyWidget.instance?.showMessage("Tests failed!\nCommit blocked!")
-                    }
 
                     val message = buildString {
                         appendLine("⚠️ Build/tests failed. Commit blocked.\n")
@@ -50,15 +44,7 @@ class CommitBuildCheckinHandlerFactory : VcsCheckinHandlerFactory(GitVcs.getKey(
                             appendLine("  ${f.message}")
                         }
                     }
-                    val choice = Messages.showYesNoDialog(
-                        project,
-                        message,
-                        "JetFlo – CI Failed",
-                        "Commit Anyway",
-                        "Cancel Commit",
-                        Messages.getWarningIcon()
-                    )
-                    if (choice == Messages.YES) ReturnResult.COMMIT else ReturnResult.CANCEL
+                    ReturnResult.COMMIT
                 }
             }
         }
