@@ -1,6 +1,5 @@
 package com.github.natalyjaya.jetflo.toolWindow
 
-import com.github.natalyjaya.jetflo.auth.AuthManager
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -15,6 +14,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import javax.swing.JPanel
+import com.github.natalyjaya.jetflo.auth.AuthManager // Asegúrate de que el import sea correcto
 
 class FlowBridgeToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -112,20 +112,7 @@ class FlowBridgeMainPanel(project: Project) : JPanel() {
                 client.newCall(request).execute().use { response ->
                     ApplicationManager.getApplication().invokeLater {
                         if (response.isSuccessful) {
-                            val siteUrl = "https://test-django-fssa.onrender.com"
-                            val options = arrayOf("Abrir en Navegador", "Cerrar")
-
-                            val result = Messages.showDialog(
-                                "¡Despliegue iniciado correctamente!\nTu sitio estará disponible en breve en:\n$siteUrl",
-                                "Render Deploy Exitoso",
-                                options,
-                                0,
-                                Messages.getInformationIcon()
-                            )
-
-                            if (result == 0) {
-                                com.intellij.ide.BrowserUtil.browse(siteUrl)
-                            }
+                            Messages.showInfoMessage("¡Despliegue en Render solicitado con éxito!", "Render Deploy")
                         } else {
                             Messages.showErrorDialog("Error en Render: ${response.code}", "Error de Despliegue")
                         }
