@@ -55,7 +55,7 @@ class RockyFloatingActivity : ProjectActivity {
             })
 
             Timer(1500) {
-                rockyWidget.showMessage("Hi! I'm Rocky 👋") {
+                rockyWidget.showMessage("Hi! I'm Rocky") {
                     Timer(2000) {
                         rockyWidget.showMessage("Click me when\nyou need help!")
                     }.apply { isRepeats = false; start() }
@@ -798,5 +798,9 @@ class RockyWidget(
 
         // ── Rocky ─────────────────────────────────────────────────────────────
         if (img != null) g2.drawImage(img, rX, rY, ROCKY_W, ROCKY_H, null)
+    }
+
+    companion object {
+        var instance: RockyWidget? = null
     }
 }
