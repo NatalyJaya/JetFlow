@@ -18,14 +18,6 @@
 
         <postStartupActivity implementation="com.github.natalyjaya.jetflo.ui.RockyFloatingActivity"/>
         <postStartupActivity implementation="com.github.natalyjaya.jetflo.startup.MyProjectActivity"/>
-        <!-- Registra el listener de push para el polling de GitHub Actions -->
         <postStartupActivity implementation="com.github.natalyjaya.jetflo.ci.JetFloPushStartupActivity"/>
-
-        <externalAnnotator
-                language="kotlin"
-                implementationClass="com.github.natalyjaya.jetflo.ci.TestFailureAnnotator"/>
-
-        <vcsCheckinHandlerFactory
-                implementation="com.github.natalyjaya.jetflo.ci.CommitBuildCheckinHandlerFactory"/>
     </extensions>
 </idea-plugin>

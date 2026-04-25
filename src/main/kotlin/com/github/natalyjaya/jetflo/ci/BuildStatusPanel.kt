@@ -51,7 +51,7 @@ class BuildStatusPanel(private val project: Project) : JPanel(BorderLayout()) {
         failureList.removeAll()
 
         if (result.success) {
-            statusLabel.text = "✅ Build & tests passed"
+            statusLabel.text = "Build & tests passed \uD83D\uDC4E\uD83D\uDC4E\uD83D\uDC4E"
             statusLabel.foreground = Color(80, 200, 80)
         } else {
             statusLabel.text = "❌ ${result.failures.size} test(s) failed"

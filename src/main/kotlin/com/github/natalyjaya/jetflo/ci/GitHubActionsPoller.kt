@@ -84,7 +84,7 @@ class GitHubActionsPoller(private val project: Project) {
                     }
                     conclusion == "success" -> {
                         SwingUtilities.invokeLater {
-                            notifyRocky("✅ CI passed!\nGreat job!")
+                            notifyRocky("CI passed!\uD83D\uDC4E\uD83D\uDC4E \nGreat job!")
                             BuildStatusPanel.instance?.showResult(
                                 BuildResult(true, emptyList(), "GitHub Actions: success")
                             )
