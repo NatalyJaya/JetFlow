@@ -10,6 +10,6 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow factoryClass="com.github.natalyjaya.jetflo.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.natalyjaya.jetflo.startup.MyProjectActivity" />
+        <postStartupActivity implementation="com.github.natalyjaya.jetflo.ui.RockyFloatingActivity"/>
     </extensions>
 </idea-plugin>
