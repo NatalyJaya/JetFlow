@@ -9,6 +9,8 @@
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
+        <toolWindow factoryClass="com.github.natalyjaya.jetflo.toolWindow.FlowBridgeToolWindowFactory" id="MyToolWindow"/>
+        <postStartupActivity implementation="com.github.natalyjaya.jetflo.ui.RockyFloatingActivity"/>
         <toolWindow id="JetFlo CI/CD"
                     secondary="true"
                     icon="AllIcons.Actions.Execute"
