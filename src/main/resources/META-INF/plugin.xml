@@ -9,7 +9,11 @@
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.natalyjaya.jetflo.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
+        <toolWindow id="JetFlo CI/CD"
+                    secondary="true"
+                    icon="AllIcons.Actions.Execute"
+                    anchor="right"
+                    factoryClass="com.github.natalyjaya.jetflo.toolWindow.FlowBridgeToolWindowFactory"/>
         <postStartupActivity implementation="com.github.natalyjaya.jetflo.startup.MyProjectActivity" />
     </extensions>
 </idea-plugin>
