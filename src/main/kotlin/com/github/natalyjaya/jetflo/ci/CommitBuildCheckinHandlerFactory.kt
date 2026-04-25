@@ -14,7 +14,11 @@ class CommitBuildCheckinHandlerFactory : CheckinHandlerFactory() {
                 val project = panel.project
                 val runner = BuildAndTestRunner(project)
 
+                BuildStatusPanel.instance?.showRunning()
+
                 val result = runner.runBlocking()
+
+                BuildStatusPanel.instance?.showResult(result)
 
                 return when {
                     result.success -> ReturnResult.COMMIT

@@ -84,4 +84,4 @@ class BuildAndTestRunner(private val project: Project) {
         val regex = Regex("""\($simpleClass\.kt:(\d+)\)""")
         return regex.find(stackTrace)?.groupValues?.get(1)?.toIntOrNull()
     }
-}   
+}
