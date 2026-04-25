@@ -1,14 +1,18 @@
 package com.github.natalyjaya.jetflo.ci
 
+import com.github.natalyjaya.jetflo.ui.RockyWidget
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.vcs.CheckinProjectPanel
 import com.intellij.openapi.vcs.changes.CommitContext
 import com.intellij.openapi.vcs.checkin.CheckinHandler
-import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory
+import com.intellij.openapi.vcs.checkin.VcsCheckinHandlerFactory
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.application.ApplicationManager
+import git4idea.GitVcs
 
-class CommitBuildCheckinHandlerFactory : CheckinHandlerFactory() {
+class CommitBuildCheckinHandlerFactory : VcsCheckinHandlerFactory(GitVcs.getKey()) {
 
-    override fun createHandler(panel: CheckinProjectPanel, commitContext: CommitContext): CheckinHandler {
+    override fun createVcsHandler(panel: CheckinProjectPanel, commitContext: CommitContext): CheckinHandler {
         return object : CheckinHandler() {
             override fun beforeCheckin(): ReturnResult {
                 val project = panel.project
@@ -16,30 +20,45 @@ class CommitBuildCheckinHandlerFactory : CheckinHandlerFactory() {
 
                 BuildStatusPanel.instance?.showRunning()
 
-                val result = runner.runBlocking()
+                var result: BuildResult? = null
+                ProgressManager.getInstance().runProcessWithProgressSynchronously(
+                    { result = runner.runBlocking() },
+                    "JetFlo – Running CI…",
+                    false,
+                    project
+                )
 
-                BuildStatusPanel.instance?.showResult(result)
+                val buildResult = result ?: BuildResult(false, emptyList(), "Build did not run")
+                BuildStatusPanel.instance?.showResult(buildResult)
 
-                return when {
-                    result.success -> ReturnResult.COMMIT
-                    else -> {
-                        val message = buildString {
-                            appendLine("⚠️ Build/tests failed. Commit blocked.\n")
-                            result.failures.forEach { f ->
-                                appendLine("• ${f.className}#${f.testName}")
-                                appendLine("  ${f.message}")
-                            }
-                        }
-                        val choice = Messages.showYesNoDialog(
-                            project,
-                            message,
-                            "JetFlo – CI Failed",
-                            "Commit Anyway",
-                            "Cancel Commit",
-                            Messages.getWarningIcon()
-                        )
-                        if (choice == Messages.YES) ReturnResult.COMMIT else ReturnResult.CANCEL
+                return if (buildResult.success) {
+                    // Rocky avisa del éxito
+                    ApplicationManager.getApplication().invokeLater {
+                        RockyWidget.instance?.showMessage("Tests passed!\nCommit approved!")
                     }
+                    ReturnResult.COMMIT
+                } else {
+                    // Rocky avisa del fallo
+                    ApplicationManager.getApplication().invokeLater {
+                        RockyWidget.instance?.showMessage("Tests failed!\nCommit blocked!")
+                    }
+
+                    val message = buildString {
+                        appendLine("⚠️ Build/tests failed. Commit blocked.\n")
+                        buildResult.failures.forEach { f ->
+                            appendLine("• ${f.className}#${f.testName}")
+                            appendLine("  ${f.message}")
+                        }
+                    }
+                    val choice = Messages.showYesNoDialog(
+                        project,
+                        message,
+                        "JetFlo – CI Failed",
+                        "Commit Anyway",
+                        "Cancel Commit",
+                        Messages.getWarningIcon()
+                    )
+                    if (choice == Messages.YES) ReturnResult.COMMIT else ReturnResult.CANCEL
                 }
             }
         }
