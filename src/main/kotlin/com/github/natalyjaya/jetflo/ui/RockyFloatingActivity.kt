@@ -17,10 +17,9 @@ import org.json.JSONArray
 private const val GITHUB_API_BASE = "https://api.github.com/repos/actions/starter-workflows/contents/ci"
 private const val GITHUB_RAW_BASE = "https://raw.githubusercontent.com/actions/starter-workflows/main/ci"
 
-// Variables de tamaño unificadas
 private const val WIDGET_W  = 200
 private const val WIDGET_H  = 220
-private const val ROCKY_W    = 80  // Asegúrate de que termine en Y
+private const val ROCKY_W    = 80
 private const val ROCKY_H    = 80
 private const val MARGIN     = 10
 
@@ -43,11 +42,8 @@ class RockyFloatingActivity : ProjectActivity {
                 override fun componentResized(e: ComponentEvent?) = reposition()
             })
 
-            // --- FLUJO DE MENSAJES LENTO ---
-            // 1. Saludo inicial
             Timer(1500) {
                 rockyWidget.showMessage("Hi! I'm Rocky") {
-                    // 2. Segunda parte tras 2 segundos de pausa
                     Timer(2000) {
                         rockyWidget.showMessage("I'll help you with your CI.")
                     }.apply { isRepeats = false; start() }
@@ -83,7 +79,6 @@ class RockyWidget(private val project: Project) : JPanel(null) {
 
     init {
         isOpaque = false
-        // Posicionamiento de UI
         val comboY = WIDGET_H - ROCKY_H - 35
         stackCombo.setBounds(0, comboY, WIDGET_W - 50, 30)
         applyBtn.setBounds(WIDGET_W - 46, comboY, 44, 30)
@@ -94,6 +89,9 @@ class RockyWidget(private val project: Project) : JPanel(null) {
         applyBtn.addActionListener { onApply() }
         startBobAnimation()
         loadStacksFromGitHub()
+
+        // Registrar instancia para que el handler pueda acceder a Rocky
+        instance = this
     }
 
     private fun startBobAnimation() {
@@ -111,7 +109,7 @@ class RockyWidget(private val project: Project) : JPanel(null) {
         fullText = text
         visibleChars = 0
 
-        val typewriter = Timer(60, null) // Velocidad de escritura lenta (60ms)
+        val typewriter = Timer(60, null)
         typewriter.addActionListener {
             if (visibleChars < fullText.length) {
                 visibleChars++
@@ -120,7 +118,6 @@ class RockyWidget(private val project: Project) : JPanel(null) {
             } else {
                 (it.source as Timer).stop()
                 onFinished?.invoke()
-                // El mensaje se queda un tiempo antes de borrarse
                 Timer(3500) {
                     if (fullText == text) {
                         isTalking = false
@@ -143,7 +140,6 @@ class RockyWidget(private val project: Project) : JPanel(null) {
                         .map { it.removeSuffix(".yml").removeSuffix(".yaml") }
                 }
 
-                // Esperamos 7 segundos para que dé tiempo a las presentaciones iniciales
                 Thread.sleep(7000)
 
                 SwingUtilities.invokeLater {
@@ -241,5 +237,9 @@ class RockyWidget(private val project: Project) : JPanel(null) {
         if (rockyImage != null) {
             g2.drawImage(rockyImage, rX, rY, ROCKY_W, ROCKY_H, null)
         }
+    }
+
+    companion object {
+        var instance: RockyWidget? = null
     }
 }
