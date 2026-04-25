@@ -1,21 +1,20 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
     <id>com.github.natalyjaya.jetflo</id>
-    <n>jetFlo</n>
+    <name>jetFlo</name>
     <vendor>natalyjaya</vendor>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>Git4Idea</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow factoryClass="com.github.natalyjaya.jetflo.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
         <postStartupActivity implementation="com.github.natalyjaya.jetflo.ui.RockyFloatingActivity"/>
-
         <externalAnnotator
-                language=""
+                language="kotlin"
                 implementationClass="com.github.natalyjaya.jetflo.ci.TestFailureAnnotator"/>
-
         <vcsCheckinHandlerFactory
                 implementation="com.github.natalyjaya.jetflo.ci.CommitBuildCheckinHandlerFactory"/>
     </extensions>
