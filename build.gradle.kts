@@ -17,6 +17,7 @@ repositories {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     intellijPlatform {
         intellijIdea("2025.2.6.1")
