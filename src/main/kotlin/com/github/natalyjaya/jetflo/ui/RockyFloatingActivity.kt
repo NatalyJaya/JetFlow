@@ -21,7 +21,7 @@ private const val WIDGET_W  = 200
 private const val WIDGET_H  = 220
 private const val ROCKY_W    = 80
 private const val ROCKY_H    = 80
-private const val MARGIN     = 10
+private const val MARGIN     = 750
 
 class RockyFloatingActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
