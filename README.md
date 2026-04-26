@@ -1,51 +1,56 @@
-# jetFlo
+# JetFlow: CI/CD Management System for IntelliJ
+---
+JetFlow is an advanced plugin for the IntelliJ platform designed to centralize and simplify Continuous Integration and Continuous Deployment (CI/CD) operations. The system allows developers to manage cloud infrastructure and automation workflows without leaving the integrated development environment.
 
-![Build](https://github.com/NatalyJaya/jetFlo/workflows/Build/badge.svg)
-[![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
-[![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
+## Rocky Assistant
+---
+Rocky is a contextual assistance component integrated into the IDE interface. Its primary function is to guide the user through initial configuration and maintenance tasks.
 
-## Template ToDo list
-- [x] Create a new [IntelliJ Platform Plugin Template][template] project.
-- [ ] Get familiar with the [template documentation][template].
-- [ ] Adjust the [group](./gradle.properties), as well as the [id](./src/main/resources/META-INF/plugin.xml), [name](./src/main/resources/META-INF/plugin.xml), and [sources package](./src/main/kotlin).
-- [ ] Adjust the plugin description in `README` (see [Tips][docs:plugin-description])
-- [ ] Review the [Legal Agreements](https://plugins.jetbrains.com/docs/marketplace/legal-agreements.html?from=IJPluginTemplate).
-- [ ] [Publish a plugin manually](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginTemplate) for the first time.
-- [ ] Set the `MARKETPLACE_ID` in the above README badges. You can obtain it once the plugin is published to JetBrains Marketplace.
-- [ ] Set the [Plugin Signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html?from=IJPluginTemplate) related [secrets](https://github.com/JetBrains/intellij-platform-plugin-template#environment-variables).
-- [ ] Set the [Deployment Token](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html?from=IJPluginTemplate).
-- [ ] Click the <kbd>Watch</kbd> button on the top of the [IntelliJ Platform Plugin Template][template] to be notified about releases containing new features and fixes.
+* **Assisted Configuration:** Provides guidance in creating configuration files for various environments.
+* **Status Notifications:** Offers visual feedback regarding the success or failure of deployment operations.
+* **Quick Access:** Serves as a dynamic entry point for the plugin's most frequently used functions.
 
-<!-- Plugin description -->
-This Fancy IntelliJ Platform Plugin is going to be your implementation of the brilliant ideas that you have.
+## Key Features
+---
+### Continuous Integration (CI) Automation
+* **Workflow Generation:** Automatic creation of YAML files for GitHub Actions.
+* **Stack Detection:** Suggests CI templates based on the technology detected in the project (Java, Kotlin, Python, etc.).
+* **Validation:** Verifies the structure of configuration files before implementation.
 
-This specific section is a source for the [plugin.xml](/src/main/resources/META-INF/plugin.xml) file which will be extracted by the [Gradle](/build.gradle.kts) during the build process.
+### Render.com Integration (CD)
+* **Service Management:** Direct connection with the Render API to monitor Web Services and Workers.
+* **Manual Deployment:** Ability to trigger builds and deployments instantaneously.
+* **History and Rollback:** Access to previous versions for rapid reversion in case of production errors.
 
-To keep everything working, do not remove `<!-- ... -->` sections. 
-<!-- Plugin description end -->
+### Context Generator (Code Bundler)
+* **File Consolidation:** Groups source code and project structure into a single Markdown document.
+* **AI Optimization:** Designed to facilitate context transfer to Large Language Models (LLMs).
+* **Exclusion Control:** Automatically filters binary files, dependencies, and sensitive data.
 
 ## Installation
+---
+### System Requirements
+* IntelliJ IDEA version 2023.1 or higher.
+* Java Runtime Environment (JRE) compatible with the IDE version.
 
-- Using the IDE built-in plugin system:
-
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>Marketplace</kbd> > <kbd>Search for "jetFlo"</kbd> >
-  <kbd>Install</kbd>
-
-- Using JetBrains Marketplace:
-
-  Go to [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID) and install it by clicking the <kbd>Install to ...</kbd> button in case your IDE is running.
-
-  You can also download the [latest release](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID/versions) from JetBrains Marketplace and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
-
-- Manually:
-
-  Download the [latest release](https://github.com/NatalyJaya/jetFlo/releases/latest) and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
-
+### Manual Installation Instructions
 
 ---
-Plugin based on the [IntelliJ Platform Plugin Template][template].
 
-[template]: https://github.com/JetBrains/intellij-platform-plugin-template
-[docs:plugin-description]: https://plugins.jetbrains.com/docs/intellij/plugin-user-experience.html#plugin-description-and-presentation
+## Credential Configuration
+---
+For the correct operation of external integrations, access tokens must be configured in the JetFlow side panel:
+
+1.  **GitHub PAT:** A Personal Access Token with read and write permissions for workflows is required to manage GitHub Actions.
+2.  **Render API Key:** Necessary for communication with the Render.com control panel.
+
+All secrets are stored securely using the IntelliJ platform's encrypted persistence system.
+
+## Project Structure
+---
+The source code is organized as follows:
+
+* **src/main/kotlin/.../auth:** Implementation of security and credential persistence.
+* **src/main/kotlin/.../ci:** Logic for generating and managing GitHub workflows.
+* **src/main/kotlin/.../cd:** API client and deployment services for Render.
+* **src/main/kotlin/.../ui:** User interface components and Rocky assistant logic.
