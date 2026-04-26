@@ -3,6 +3,7 @@ package com.github.natalyjaya.jetflo.ui
 import com.github.natalyjaya.jetflo.cd.RenderApiClient
 import com.github.natalyjaya.jetflo.cd.RenderApiClient.DeployStatus
 import com.github.natalyjaya.jetflo.cd.RenderCredentialsStore
+import com.github.natalyjaya.jetflo.ci.CodeBundleGenerator
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
@@ -75,7 +76,9 @@ private enum class RockyPhase {
     CD_PROMPT,  // Pidiendo Render API key
     CD_PICK,    // Eligiendo servicio
     CD_READY,   // Deploy button visible
-    DEPLOYING   // Deploy en curso
+    DEPLOYING,  // Deploy en curso
+    BUNDLING    // Code Bundle Prompt
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +124,7 @@ class RockyWidget(
     // ── Bounding boxes píldoras (calculadas en paint) ─────────────────────────
     private var ciPillRect:  Rectangle? = null
     private var cdPillRect:  Rectangle? = null
+    private var cbPillRect:  Rectangle? = null
     private var hoveredPill: String?    = null
 
     // ── CI widgets ────────────────────────────────────────────────────────────
@@ -203,6 +207,7 @@ class RockyWidget(
                     RockyPhase.CHOICE -> {
                         if (ciPillRect?.contains(e.point) == true) onChooseCI()
                         else if (cdPillRect?.contains(e.point) == true) onChooseCD()
+                        else if (cbPillRect?.contains(e.point) == true) onChooseCB()
                     }
                     else -> {}
                 }
@@ -215,6 +220,7 @@ class RockyWidget(
                 hoveredPill = when {
                     ciPillRect?.contains(e.point) == true -> "CI"
                     cdPillRect?.contains(e.point) == true -> "CD"
+                    cbPillRect?.contains(e.point) == true -> "CB"
                     else -> null
                 }
                 cursor = if (hoveredPill != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
@@ -359,6 +365,22 @@ class RockyWidget(
         }
     }
 
+    private fun onChooseCB() {
+        idleTimer?.stop()
+        resetPills()
+        phase = RockyPhase.BUNDLING
+        setSpriteMode(SpriteMode.STAND)
+        showMessage("Generating\nCode Bundle!")
+        CodeBundleGenerator(project).generate {
+            // Callback cuando termina — vuelve a IDLE
+            SwingUtilities.invokeLater {
+                Timer(2000) {
+                    returnToIdle()
+                }.apply { isRepeats = false; start() }
+            }
+        }
+    }
+
     private fun returnToIdle() {
         phase       = RockyPhase.IDLE
         isTalking   = false
@@ -372,6 +394,7 @@ class RockyWidget(
     private fun resetPills() {
         ciPillRect  = null
         cdPillRect  = null
+        cbPillRect  = null
         hoveredPill = null
         cursor      = Cursor.getDefaultCursor()
     }
@@ -806,27 +829,30 @@ class RockyWidget(
 
             val pillLabelCI = "Set up CI"
             val pillLabelCD = "Set up CD"
+            val pillLabelCB = "Code Bundle"
             val pillWCI     = fm.stringWidth(pillLabelCI) + pad * 2
             val pillWCD     = fm.stringWidth(pillLabelCD) + pad * 2
-            val pillsRowW   = pillWCI + pillGap + pillWCD
+            val pillWCB     = fm.stringWidth(pillLabelCB) + pad * 2
+            // Las tres píldoras en dos filas: CI y CD arriba, CB centrada abajo
+            val pillsRowW   = maxOf(pillWCI + pillGap + pillWCD, pillWCB)
 
             val textMaxW   = bubbleLines.maxOfOrNull { fm.stringWidth(it) } ?: 0
             val contentW   = if (isChoice) maxOf(textMaxW, pillsRowW) else textMaxW
             val bW         = (contentW + pad * 2).coerceAtLeast(80)
             val textBlockH = bubbleLines.size * fm.height + pad * 2
-            val bH         = if (isChoice) textBlockH + pillH + pillGap + pad else textBlockH
+            val bH         = if (isChoice) textBlockH + pillH * 2 + pillGap * 2 + pad else textBlockH
 
             val bX = ((width - bW) / 2).coerceAtLeast(2)
             val bY = (rY - bH - 12).coerceAtLeast(2)
 
-            // Fondo + borde
+// Fondo + borde
             g2.color = Color(255, 255, 255, 245)
             g2.fillRoundRect(bX, bY, bW, bH, cornerR, cornerR)
             g2.stroke = BasicStroke(1.5f)
             g2.color = Color(160, 100, 60, 90)
             g2.drawRoundRect(bX, bY, bW, bH, cornerR, cornerR)
 
-            // Texto (typewriter)
+// Texto (typewriter)
             g2.color = Color(30, 30, 30)
             bubbleLines.forEachIndexed { i, line ->
                 g2.drawString(
@@ -836,48 +862,54 @@ class RockyWidget(
                 )
             }
 
-            // ── Píldoras CI / CD ──────────────────────────────────────────────
             if (isChoice) {
-                val pillY  = bY + textBlockH + pillGap / 2
-                val startX = bX + (bW - pillsRowW) / 2
+                val row1Y  = bY + textBlockH + pillGap / 2
+                val row2Y  = row1Y + pillH + pillGap
+                val startX = bX + (bW - (pillWCI + pillGap + pillWCD)) / 2
 
-                // Píldora CI (morada)
+                // Píldora CI — marrón
                 val ciX     = startX
                 val ciColor = if (hoveredPill == "CI") Color(120, 70, 40) else Color(160, 100, 60)
                 g2.color = Color(160, 100, 60, 30)
-                g2.fillRoundRect(ciX + 2, pillY + 3, pillWCI, pillH, 14, 14)
+                g2.fillRoundRect(ciX + 2, row1Y + 3, pillWCI, pillH, 14, 14)
                 g2.color = ciColor
-                g2.fillRoundRect(ciX, pillY, pillWCI, pillH, 14, 14)
+                g2.fillRoundRect(ciX, row1Y, pillWCI, pillH, 14, 14)
                 g2.color = Color(255, 255, 255, 50)
-                g2.fillRoundRect(ciX + 2, pillY + 2, pillWCI - 4, pillH / 2 - 2, 12, 12)
+                g2.fillRoundRect(ciX + 2, row1Y + 2, pillWCI - 4, pillH / 2 - 2, 12, 12)
                 g2.color = Color.WHITE
-                g2.drawString(
-                    pillLabelCI,
-                    ciX + (pillWCI - fm.stringWidth(pillLabelCI)) / 2,
-                    pillY + (pillH + fm.ascent - fm.descent) / 2
-                )
-                ciPillRect = Rectangle(ciX, pillY, pillWCI, pillH)
+                g2.drawString(pillLabelCI, ciX + (pillWCI - fm.stringWidth(pillLabelCI)) / 2, row1Y + (pillH + fm.ascent - fm.descent) / 2)
+                ciPillRect = Rectangle(ciX, row1Y, pillWCI, pillH)
 
-                // Píldora CD (verde)
+                // Píldora CD — rojo
                 val cdX     = ciX + pillWCI + pillGap
                 val cdColor = if (hoveredPill == "CD") Color(150, 50, 50) else Color(190, 80, 70)
                 g2.color = Color(190, 80, 70, 30)
-                g2.fillRoundRect(cdX + 2, pillY + 3, pillWCD, pillH, 14, 14)
+                g2.fillRoundRect(cdX + 2, row1Y + 3, pillWCD, pillH, 14, 14)
                 g2.color = cdColor
-                g2.fillRoundRect(cdX, pillY, pillWCD, pillH, 14, 14)
+                g2.fillRoundRect(cdX, row1Y, pillWCD, pillH, 14, 14)
                 g2.color = Color(255, 255, 255, 50)
-                g2.fillRoundRect(cdX + 2, pillY + 2, pillWCD - 4, pillH / 2 - 2, 12, 12)
+                g2.fillRoundRect(cdX + 2, row1Y + 2, pillWCD - 4, pillH / 2 - 2, 12, 12)
                 g2.color = Color.WHITE
-                g2.drawString(
-                    pillLabelCD,
-                    cdX + (pillWCD - fm.stringWidth(pillLabelCD)) / 2,
-                    pillY + (pillH + fm.ascent - fm.descent) / 2
-                )
-                cdPillRect = Rectangle(cdX, pillY, pillWCD, pillH)
+                g2.drawString(pillLabelCD, cdX + (pillWCD - fm.stringWidth(pillLabelCD)) / 2, row1Y + (pillH + fm.ascent - fm.descent) / 2)
+                cdPillRect = Rectangle(cdX, row1Y, pillWCD, pillH)
+
+                // Píldora CB — azul centrada en segunda fila
+                val cbX     = bX + (bW - pillWCB) / 2
+                val cbColor = if (hoveredPill == "CB") Color(30, 80, 160) else Color(50, 120, 200)
+                g2.color = Color(50, 120, 200, 30)
+                g2.fillRoundRect(cbX + 2, row2Y + 3, pillWCB, pillH, 14, 14)
+                g2.color = cbColor
+                g2.fillRoundRect(cbX, row2Y, pillWCB, pillH, 14, 14)
+                g2.color = Color(255, 255, 255, 50)
+                g2.fillRoundRect(cbX + 2, row2Y + 2, pillWCB - 4, pillH / 2 - 2, 12, 12)
+                g2.color = Color.WHITE
+                g2.drawString(pillLabelCB, cbX + (pillWCB - fm.stringWidth(pillLabelCB)) / 2, row2Y + (pillH + fm.ascent - fm.descent) / 2)
+                cbPillRect = Rectangle(cbX, row2Y, pillWCB, pillH)
 
             } else {
                 ciPillRect = null
                 cdPillRect = null
+                cbPillRect = null
             }
         }
 
