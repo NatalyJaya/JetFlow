@@ -20,8 +20,8 @@ import org.json.JSONArray
 private const val GITHUB_API_BASE = "https://api.github.com/repos/actions/starter-workflows/contents/ci"
 private const val GITHUB_RAW_BASE = "https://raw.githubusercontent.com/actions/starter-workflows/main/ci"
 
-private const val WIDGET_W = 220
-private const val WIDGET_H = 240
+private const val WIDGET_W = 320
+private const val WIDGET_H = 280
 private const val ROCKY_W  = 80
 private const val ROCKY_H  = 80
 private const val MARGIN   = 10
@@ -42,11 +42,11 @@ class RockyFloatingActivity : ProjectActivity {
             val layeredPane = frame.layeredPane
 
             val rockyWidget = RockyWidget(project, layeredPane)
-            layeredPane.add(rockyWidget, JLayeredPane.PALETTE_LAYER)
+            layeredPane.add(rockyWidget, JLayeredPane.POPUP_LAYER)
 
             fun reposition() {
                 val lh = layeredPane.height
-                rockyWidget.setBounds(MARGIN, (lh - WIDGET_H - 40).coerceAtLeast(0), WIDGET_W, WIDGET_H)
+                rockyWidget.setBounds(MARGIN, (lh - WIDGET_H - 20).coerceAtLeast(0), WIDGET_W, WIDGET_H)
             }
 
             reposition()
@@ -105,6 +105,7 @@ class RockyWidget(
     private var spriteMode  = SpriteMode.WALK
     private var spriteFrame = 0
     private var spriteTimer: Timer? = null
+    private var jazzCycles  = 0
 
     // ── Bob (parado, sin hablar) ───────────────────────────────────────────────
     private var bobOffset    = 0f
@@ -134,7 +135,7 @@ class RockyWidget(
     }
 
     // ── CD widgets ────────────────────────────────────────────────────────────
-    private val deployBtn = JButton("🚀 Deploy").apply {
+    private val deployBtn = JButton("Deploy").apply {
         isVisible = false
         background = Color(34, 197, 94); foreground = Color.WHITE
         isFocusPainted = false; font = Font("SansSerif", Font.BOLD, 11)
@@ -147,13 +148,33 @@ class RockyWidget(
 
     private var lastDeployId: String? = null
 
+    // Movimiento
+    private var walkX         = MARGIN.toFloat()
+    private var walkDirection = 1  // 1 = derecha, -1 = izquierda
+    private var walkTimer: Timer? = null
+
+    private val randomPhrases = listOf(
+        "You sleep,\nI watch.",
+        "Thumbs up, baby \uD83D\uDC4E \uD83D\uDC4E \uD83D\uDC4E",
+        "Fist my bump",
+        "Grace question is dumb",
+        "Only us.",
+        "Rocky, Grace, big science",
+        "Good, Good",
+        "Oh, humor. \nConfusing.",
+        "Dirty, dirty, dirty…. \nThis room for garbage?",
+        "Amaze, Amaze, Amaze",
+        "Grace Rocky Save Stars"
+    )
+    private var phraseTimer: Timer? = null
+
     // ─────────────────────────────────────────────────────────────────────────
     init {
         isOpaque = false
 
-        val comboY = WIDGET_H - ROCKY_H - 35
-        stackCombo.setBounds(0, comboY, WIDGET_W - 50, 30)
-        applyBtn.setBounds(WIDGET_W - 46, comboY, 44, 30)
+        val comboY = WIDGET_H - ROCKY_H - 10
+        stackCombo.setBounds(0, comboY, WIDGET_W - 54, 30)
+        applyBtn.setBounds(WIDGET_W - 50, comboY, 44, 30)
 
         val cdRowY = WIDGET_H - ROCKY_H - 68
         deployBtn.setBounds(0, cdRowY, WIDGET_W / 2 - 2, 26)
@@ -169,6 +190,7 @@ class RockyWidget(
         // Arrancar caminando
         setSpriteMode(SpriteMode.WALK)
         startBobAnimation()
+        startWalking()
 
         // Registrar instancia para el CI poller
         instance = this
@@ -227,8 +249,12 @@ class RockyWidget(
             spriteFrame = (spriteFrame + 1) % frames.size
             // JAZZ: después de 2 ciclos completos vuelve a STAND y llama onDone
             if (mode == SpriteMode.JAZZ && spriteFrame == 0) {
-                setSpriteMode(SpriteMode.STAND)
-                onDone?.invoke()
+                jazzCycles++
+                if (jazzCycles >= 5) {  // 5 ciclos completos
+                    jazzCycles = 0
+                    setSpriteMode(SpriteMode.STAND)
+                    onDone?.invoke()
+                }
             }
             repaint()
         }.also { it.start() }
@@ -247,11 +273,61 @@ class RockyWidget(
         }.start()
     }
 
+    // funcion caminar
+
+    fun startWalking() {
+        walkTimer?.stop()
+        walkTimer = Timer(30) {
+            if (phase != RockyPhase.IDLE || isTalking) return@Timer
+
+            val parentW = layeredPane.width
+            val maxX    = (parentW - WIDGET_W - MARGIN).toFloat()
+
+            walkX += walkDirection * 1.2f
+
+            if (walkX >= maxX) {
+                walkX = maxX
+                walkDirection = -1
+                // Girar sprite (walk frames hacia la otra dirección)
+            } else if (walkX <= MARGIN) {
+                walkX = MARGIN.toFloat()
+                walkDirection = 1
+            }
+
+            val currentY = y
+            setBounds(walkX.toInt(), currentY, WIDGET_W, WIDGET_H)
+        }.also { it.start() }
+
+        // Frases random cada 15-25 segundos
+        schedulNextPhrase()
+    }
+
+    private fun schedulNextPhrase() {
+        phraseTimer?.stop()
+        val delay = (10_000..15_000).random()
+        phraseTimer = Timer(delay) {
+            if (phase == RockyPhase.IDLE && !isTalking) {
+                if ((0..2).random() == 0) {
+                    // Baila Y habla a la vez
+                    walkTimer?.stop()
+                    showMessage(randomPhrases.random())
+                    setSpriteMode(SpriteMode.JAZZ) {
+                        setSpriteMode(SpriteMode.WALK)
+                        startWalking()
+                    }
+                }
+            }
+            schedulNextPhrase()
+        }.apply { isRepeats = false; start() }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     //  IDLE / CHOICE
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun showChoiceMenu() {
+        walkTimer?.stop()
+        phraseTimer?.stop()
         phase       = RockyPhase.CHOICE
         isTalking   = true
         fullText    = "What do you need?"
@@ -289,6 +365,7 @@ class RockyWidget(
         bubbleLines = emptyList()
         resetPills()
         setSpriteMode(SpriteMode.WALK)
+        startWalking()
         repaint()
     }
 
@@ -354,7 +431,7 @@ class RockyWidget(
                     // ── CI terminado: jazz y vuelve a IDLE ────────────────────
                     // NO redirige a CD — el usuario lo pedirá cuando quiera
                     setSpriteMode(SpriteMode.JAZZ)
-                    showMessage("CI is live! ✅\nClick me again for CD.") {
+                    showMessage("CI is live! \nClick me again for CD.") {
                         Timer(1000) {
                             phase = RockyPhase.IDLE
                             setSpriteMode(SpriteMode.WALK)
@@ -447,7 +524,7 @@ class RockyWidget(
                         }
                     }
 
-                    val options = arrayOf("🔗 Link existing service", "✨ Create new on Render", "Skip for now")
+                    val options = arrayOf("Link existing service", "Create new on Render", "Skip for now")
                     when (JOptionPane.showOptionDialog(
                         null,
                         "Which Render service should I deploy to?",
@@ -527,7 +604,7 @@ class RockyWidget(
         RenderCredentialsStore.saveServiceId(project, serviceId)
         phase = RockyPhase.CD_READY
         setSpriteMode(SpriteMode.JAZZ)
-        showMessage("All set! 🎉\nReady to deploy \"$name\".") {
+        showMessage("All set! \nReady to deploy \"$name\".") {
             showCdReadyUi()
         }
     }
@@ -591,7 +668,7 @@ class RockyWidget(
 
     private fun updateDeployBubble(status: DeployStatus) {
         val msg = when {
-            status.isSuccess -> "Deploy successful! 🚀\nYou're live on Render!"
+            status.isSuccess -> "Deploy successful! \nYou're live on Render!"
             status.isFailed  -> "Oh no! Deploy failed. ↩️\nPress Rollback to revert."
             status == DeployStatus.CANCELED -> "Deploy was canceled."
             else -> "Deploying... ⏳\n${status.name.lowercase().replace('_', ' ')}"
@@ -727,8 +804,8 @@ class RockyWidget(
             g2.font = Font("SansSerif", Font.BOLD, 12)
             val fm  = g2.fontMetrics
 
-            val pillLabelCI = "⚙  Set up CI"
-            val pillLabelCD = "🚀 Set up CD"
+            val pillLabelCI = "Set up CI"
+            val pillLabelCD = "Set up CD"
             val pillWCI     = fm.stringWidth(pillLabelCI) + pad * 2
             val pillWCD     = fm.stringWidth(pillLabelCD) + pad * 2
             val pillsRowW   = pillWCI + pillGap + pillWCD
@@ -746,7 +823,7 @@ class RockyWidget(
             g2.color = Color(255, 255, 255, 245)
             g2.fillRoundRect(bX, bY, bW, bH, cornerR, cornerR)
             g2.stroke = BasicStroke(1.5f)
-            g2.color  = Color(88, 101, 242, 90)
+            g2.color = Color(160, 100, 60, 90)
             g2.drawRoundRect(bX, bY, bW, bH, cornerR, cornerR)
 
             // Texto (typewriter)
@@ -766,8 +843,8 @@ class RockyWidget(
 
                 // Píldora CI (morada)
                 val ciX     = startX
-                val ciColor = if (hoveredPill == "CI") Color(60, 73, 210) else Color(88, 101, 242)
-                g2.color = Color(88, 101, 242, 30)
+                val ciColor = if (hoveredPill == "CI") Color(120, 70, 40) else Color(160, 100, 60)
+                g2.color = Color(160, 100, 60, 30)
                 g2.fillRoundRect(ciX + 2, pillY + 3, pillWCI, pillH, 14, 14)
                 g2.color = ciColor
                 g2.fillRoundRect(ciX, pillY, pillWCI, pillH, 14, 14)
@@ -783,8 +860,8 @@ class RockyWidget(
 
                 // Píldora CD (verde)
                 val cdX     = ciX + pillWCI + pillGap
-                val cdColor = if (hoveredPill == "CD") Color(20, 150, 68) else Color(34, 197, 94)
-                g2.color = Color(34, 197, 94, 30)
+                val cdColor = if (hoveredPill == "CD") Color(150, 50, 50) else Color(190, 80, 70)
+                g2.color = Color(190, 80, 70, 30)
                 g2.fillRoundRect(cdX + 2, pillY + 3, pillWCD, pillH, 14, 14)
                 g2.color = cdColor
                 g2.fillRoundRect(cdX, pillY, pillWCD, pillH, 14, 14)

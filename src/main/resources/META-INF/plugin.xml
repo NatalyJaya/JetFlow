@@ -19,5 +19,9 @@
         <postStartupActivity implementation="com.github.natalyjaya.jetflo.ui.RockyFloatingActivity"/>
         <postStartupActivity implementation="com.github.natalyjaya.jetflo.startup.MyProjectActivity"/>
         <postStartupActivity implementation="com.github.natalyjaya.jetflo.ci.JetFloPushStartupActivity"/>
+
+        <notificationGroup id="JetFlo CI"
+                           displayType="BALLOON"
+                           isLogByDefault="true"/>
     </extensions>
 </idea-plugin>
