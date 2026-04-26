@@ -593,9 +593,9 @@ class RockyWidget(
 
                     // Menú dinámico dependiendo de si hay servicios o no
                     val options = if (services.isEmpty()) {
-                        arrayOf("✨ Create new on Render", "❌ Exit")
+                        arrayOf("Create new on Render", "Exit")
                     } else {
-                        arrayOf("🔗 Link existing service", "✨ Create new on Render", "❌ Exit")
+                        arrayOf("Link existing service", "Create new on Render", "Exit")
                     }
 
                     val choice = JOptionPane.showOptionDialog(
