@@ -356,7 +356,7 @@ class RockyWidget(
         // Si detecta que ya lo configuraste en el pasado (caché del IDE)
         if (RenderCredentialsStore.isConfigured(project)) {
             val savedId = RenderCredentialsStore.getServiceId(project) ?: "?"
-            val options = arrayOf("🚀 Deploy now", "⚙️ Re-link service", "🗑️ Reset config", "❌ Cancel")
+            val options = arrayOf("Deploy now", "Re-link service", "Reset config", "Cancel")
             val choice = JOptionPane.showOptionDialog(
                 null,
                 "This project is already linked to a Render service.\n" +
