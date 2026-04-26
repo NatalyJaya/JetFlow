@@ -1,3 +1,11 @@
+
+
+<div align="center">
+
+<img src="https://media.tenor.com/CTSpEQfoZzoAAAAM/project-hail-mary-rocky-project-hail-mary.gif" width="150" px />
+
+</div>
+
 # JetFlow: CI/CD Management System for IntelliJ
 ---
 JetFlow is an advanced plugin for the IntelliJ platform designed to centralize and simplify Continuous Integration and Continuous Deployment (CI/CD) operations. The system allows developers to manage cloud infrastructure and automation workflows without leaving the integrated development environment.
