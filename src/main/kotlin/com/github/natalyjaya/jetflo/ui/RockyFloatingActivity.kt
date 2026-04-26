@@ -3,6 +3,7 @@ package com.github.natalyjaya.jetflo.ui
 import com.github.natalyjaya.jetflo.cd.RenderApiClient
 import com.github.natalyjaya.jetflo.cd.RenderApiClient.DeployStatus
 import com.github.natalyjaya.jetflo.cd.RenderCredentialsStore
+import com.github.natalyjaya.jetflo.ci.CodeBundleGenerator
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
@@ -75,7 +76,8 @@ private enum class RockyPhase {
     CD_PROMPT,  // Pidiendo Render API key
     CD_PICK,    // Eligiendo servicio
     CD_READY,   // Deploy button visible
-    DEPLOYING   // Deploy en curso
+    DEPLOYING,  // Deploy en curso
+    BUNDLING    // Code Bundle Prompt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +123,7 @@ class RockyWidget(
     // ── Bounding boxes píldoras (calculadas en paint) ─────────────────────────
     private var ciPillRect:  Rectangle? = null
     private var cdPillRect:  Rectangle? = null
+    private var cbPillRect:  Rectangle? = null
     private var hoveredPill: String?    = null
 
     // ── CI widgets ────────────────────────────────────────────────────────────
@@ -193,7 +196,7 @@ class RockyWidget(
         startWalking()
 
         // Registrar instancia para el CI poller
-        instance = this
+        Companion.instance = this
 
         // Clic en Rocky (IDLE) → menú; clic en píldoras (CHOICE) → elección
         addMouseListener(object : MouseAdapter() {
@@ -203,7 +206,10 @@ class RockyWidget(
                     RockyPhase.CHOICE -> {
                         if (ciPillRect?.contains(e.point) == true) onChooseCI()
                         else if (cdPillRect?.contains(e.point) == true) onChooseCD()
+                        else if (cbPillRect?.contains(e.point) == true) onChooseCB()
                     }
+                    // Permitir cancelar haciendo clic en Rocky en cualquier momento
+                    RockyPhase.CD_READY, RockyPhase.CI, RockyPhase.DEPLOYING -> returnToIdle()
                     else -> {}
                 }
             }
@@ -215,6 +221,7 @@ class RockyWidget(
                 hoveredPill = when {
                     ciPillRect?.contains(e.point) == true -> "CI"
                     cdPillRect?.contains(e.point) == true -> "CD"
+                    cbPillRect?.contains(e.point) == true -> "CB"
                     else -> null
                 }
                 cursor = if (hoveredPill != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
@@ -222,12 +229,6 @@ class RockyWidget(
                 if (hoveredPill != prev) repaint()
             }
         })
-
-        if (RenderCredentialsStore.isConfigured(project)) {
-            phase = RockyPhase.CD_READY
-            setSpriteMode(SpriteMode.STAND)
-            showCdReadyUi()
-        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -288,7 +289,6 @@ class RockyWidget(
             if (walkX >= maxX) {
                 walkX = maxX
                 walkDirection = -1
-                // Girar sprite (walk frames hacia la otra dirección)
             } else if (walkX <= MARGIN) {
                 walkX = MARGIN.toFloat()
                 walkDirection = 1
@@ -352,10 +352,71 @@ class RockyWidget(
     private fun onChooseCD() {
         idleTimer?.stop()
         resetPills()
+
+        // Si detecta que ya lo configuraste en el pasado (caché del IDE)
+        if (RenderCredentialsStore.isConfigured(project)) {
+            val savedId = RenderCredentialsStore.getServiceId(project) ?: "?"
+            val options = arrayOf("🚀 Deploy now", "⚙️ Re-link service", "🗑️ Reset config", "❌ Cancel")
+            val choice = JOptionPane.showOptionDialog(
+                null,
+                "This project is already linked to a Render service.\n" +
+                        "Saved service ID: $savedId\n\nWhat would you like to do?",
+                "CD Already Configured",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
+                null, options, options[0]
+            )
+
+            when (choice) {
+                0 -> {
+                    // Deploy directly with the saved serviceId
+                    phase = RockyPhase.CD_READY
+                    setSpriteMode(SpriteMode.JAZZ)
+                    showMessage("All set!\nReady to deploy.") {
+                        showCdReadyUi()
+                    }
+                    return
+                }
+                1 -> {
+                    // Re-link: clear stale serviceId so a phantom/failed previous
+                    // creation does not cause a 404 on the next deploy attempt.
+                    RenderCredentialsStore.clearServiceId(project)
+                    // fall through to startCdFlow below
+                }
+                2 -> {
+                    // Full reset: wipe API key + serviceId and start from scratch
+                    RenderCredentialsStore.clearAll(project)
+                    showMessage("Config cleared.\nLet's start fresh!")
+                    Timer(1500) { startCdFlow() }.apply { isRepeats = false; start() }
+                    return
+                }
+                else -> {
+                    returnToIdle()
+                    return
+                }
+            }
+        }
+
+        // Inicia el flujo normal (pide API Key si no la tiene, y muestra las opciones)
         phase = RockyPhase.CD_PROMPT
         setSpriteMode(SpriteMode.STAND)
         showMessage("Let's configure\nyour deployment!") {
             Timer(1200) { startCdFlow() }.apply { isRepeats = false; start() }
+        }
+    }
+
+    private fun onChooseCB() {
+        idleTimer?.stop()
+        resetPills()
+        phase = RockyPhase.BUNDLING
+        setSpriteMode(SpriteMode.STAND)
+        showMessage("Generating\nCode Bundle!")
+        CodeBundleGenerator(project).generate {
+            // Callback cuando termina — vuelve a IDLE
+            SwingUtilities.invokeLater {
+                Timer(2000) {
+                    returnToIdle()
+                }.apply { isRepeats = false; start() }
+            }
         }
     }
 
@@ -364,6 +425,10 @@ class RockyWidget(
         isTalking   = false
         bubbleLines = emptyList()
         resetPills()
+        deployBtn.isVisible = false
+        rollbackBtn.isVisible = false
+        stackCombo.isVisible = false
+        applyBtn.isVisible = false
         setSpriteMode(SpriteMode.WALK)
         startWalking()
         repaint()
@@ -372,6 +437,7 @@ class RockyWidget(
     private fun resetPills() {
         ciPillRect  = null
         cdPillRect  = null
+        cbPillRect  = null
         hoveredPill = null
         cursor      = Cursor.getDefaultCursor()
     }
@@ -397,6 +463,7 @@ class RockyWidget(
                         setSpriteMode(SpriteMode.STAND)
                         stackCombo.removeAllItems()
                         stackCombo.addItem("— Select a stack —")
+                        stackCombo.addItem("❌ Cancel")
                         names.forEach { stackCombo.addItem(it) }
                         stackCombo.isVisible = true; applyBtn.isVisible = true
                         stackCombo.isEnabled = true; applyBtn.isEnabled = true
@@ -406,7 +473,10 @@ class RockyWidget(
                 }
             } catch (e: Exception) {
                 SwingUtilities.invokeLater {
-                    if (phase == RockyPhase.CI) showMessage("GitHub connection failed")
+                    if (phase == RockyPhase.CI) {
+                        showMessage("GitHub connection failed")
+                        Timer(2000) { returnToIdle() }.apply { isRepeats = false; start() }
+                    }
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -415,6 +485,11 @@ class RockyWidget(
     private fun onApply() {
         val selected = stackCombo.selectedItem as? String ?: return
         if (selected.startsWith("—")) return
+        if (selected == "❌ Cancel") {
+            returnToIdle()
+            return
+        }
+
         isLoading = true; applyBtn.isEnabled = false
         showMessage("Setting up $selected CI...")
 
@@ -428,13 +503,10 @@ class RockyWidget(
                     stackCombo.isVisible = false
                     applyBtn.isVisible   = false
 
-                    // ── CI terminado: jazz y vuelve a IDLE ────────────────────
-                    // NO redirige a CD — el usuario lo pedirá cuando quiera
                     setSpriteMode(SpriteMode.JAZZ)
                     showMessage("CI is live! \nClick me again for CD.") {
                         Timer(1000) {
-                            phase = RockyPhase.IDLE
-                            setSpriteMode(SpriteMode.WALK)
+                            returnToIdle()
                         }.apply { isRepeats = false; start() }
                     }
                 }
@@ -478,13 +550,13 @@ class RockyWidget(
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE
             )
             if (res != JOptionPane.OK_OPTION) {
-                showMessage("No worries!\nYou can set it later in JetFlo panel.")
+                showMessage("No worries!\nYou can set it later.")
                 returnToIdle()
                 return@Timer
             }
             val key = String(field.password).trim()
             if (key.isBlank()) {
-                showMessage("No key entered.\nOpen JetFlo panel to try again.")
+                showMessage("No key entered.\nTry again later.")
                 returnToIdle()
                 return@Timer
             }
@@ -502,11 +574,6 @@ class RockyWidget(
                 val services = RenderApiClient.listServices(apiKey)
 
                 SwingUtilities.invokeLater {
-                    if (services.isEmpty()) {
-                        showCreateServiceDialog(apiKey)
-                        return@invokeLater
-                    }
-
                     val match = services.firstOrNull {
                         it.name.equals(project.name, ignoreCase = true)
                     }
@@ -524,30 +591,61 @@ class RockyWidget(
                         }
                     }
 
-                    val options = arrayOf("Link existing service", "Create new on Render", "Skip for now")
-                    when (JOptionPane.showOptionDialog(
+                    // Menú dinámico dependiendo de si hay servicios o no
+                    val options = if (services.isEmpty()) {
+                        arrayOf("✨ Create new on Render", "❌ Exit")
+                    } else {
+                        arrayOf("🔗 Link existing service", "✨ Create new on Render", "❌ Exit")
+                    }
+
+                    val choice = JOptionPane.showOptionDialog(
                         null,
                         "Which Render service should I deploy to?",
                         "Pick a Render Service",
                         JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
                         null, options, options[0]
-                    )) {
-                        0 -> {
-                            val names  = services.map { it.name }.toTypedArray()
-                            val chosen = JOptionPane.showInputDialog(
-                                null, "Select the service:", "Link Service",
-                                JOptionPane.PLAIN_MESSAGE, null, names, names[0]
-                            ) as? String ?: return@invokeLater
-                            val svc = services.first { it.name == chosen }
-                            bindService(svc.id, svc.name)
+                    )
+
+                    if (services.isEmpty()) {
+                        when (choice) {
+                            0 -> showCreateServiceDialog(apiKey)
+                            else -> { showMessage("OK! Click me again\nto deploy later."); returnToIdle() }
                         }
-                        1    -> showCreateServiceDialog(apiKey)
-                        else -> { showMessage("OK! Click me again\nto deploy later."); returnToIdle() }
+                    } else {
+                        when (choice) {
+                            0 -> {
+                                val names  = services.map { it.name }.toTypedArray()
+                                val chosen = JOptionPane.showInputDialog(
+                                    null, "Select the service:", "Link Service",
+                                    JOptionPane.PLAIN_MESSAGE, null, names, names[0]
+                                ) as? String
+
+                                if (chosen == null) {
+                                    returnToIdle()
+                                    return@invokeLater
+                                }
+                                val svc = services.first { it.name == chosen }
+                                bindService(svc.id, svc.name)
+                            }
+                            1 -> showCreateServiceDialog(apiKey)
+                            else -> { showMessage("OK! Click me again\nto deploy later."); returnToIdle() }
+                        }
                     }
                 }
             } catch (e: Exception) {
+                val msg = e.message ?: "Unknown error"
                 SwingUtilities.invokeLater {
-                    showMessage("Render API error.\nCheck your key in JetFlo panel.")
+                    val area = javax.swing.JTextArea(msg).apply {
+                        isEditable = false; lineWrap = true; wrapStyleWord = true
+                        columns = 50; rows = (msg.lines().size + 1).coerceIn(3, 12)
+                    }
+                    javax.swing.JOptionPane.showMessageDialog(
+                        null, javax.swing.JScrollPane(area),
+                        "Render API error — List services",
+                        javax.swing.JOptionPane.ERROR_MESSAGE
+                    )
+                    showMessage("Render API error.\nSee error dialog.")
+                    Timer(2500) { returnToIdle() }.apply { isRepeats = false; start() }
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -555,13 +653,18 @@ class RockyWidget(
 
     private fun showCreateServiceDialog(apiKey: String) {
         val nameField   = JTextField(project.name)
-        val repoField   = JTextField("https://github.com/user/repo")
+        val repoField   = JTextField("https://github.com/NatalyJaya/Portfolio.git")
         val branchField = JTextField("main")
+
+        // Render requires an explicit runtime — these are the valid values
+        val runtimes = arrayOf("node", "python", "ruby", "go", "rust", "elixir", "docker", "image")
+        val runtimeCombo = JComboBox(runtimes).apply { selectedItem = "node" }
 
         val form = JPanel(GridLayout(0, 2, 6, 6)).apply {
             add(JLabel("Service name:")); add(nameField)
             add(JLabel("GitHub repo URL:")); add(repoField)
             add(JLabel("Branch:")); add(branchField)
+            add(JLabel("Runtime:")); add(runtimeCombo)
         }
 
         val res = JOptionPane.showConfirmDialog(
@@ -576,8 +679,11 @@ class RockyWidget(
 
         val name = nameField.text.trim()
         val repo = repoField.text.trim()
+        val env  = (runtimeCombo.selectedItem as? String) ?: "node"
+
         if (name.isBlank() || repo.isBlank()) {
             showMessage("Name and repo are required.")
+            returnToIdle()
             return
         }
 
@@ -589,12 +695,24 @@ class RockyWidget(
                     apiKey   = apiKey,
                     name     = name,
                     repoUrl  = repo,
-                    branch   = branchField.text.trim().ifBlank { "main" }
+                    branch   = branchField.text.trim().ifBlank { "main" },
+                    env      = env
                 )
                 SwingUtilities.invokeLater { bindService(serviceId, name) }
             } catch (e: Exception) {
+                val msg = e.message ?: "Unknown error"
                 SwingUtilities.invokeLater {
-                    showMessage("Create failed.\nTry again in JetFlo panel.")
+                    val area = javax.swing.JTextArea(msg).apply {
+                        isEditable = false; lineWrap = true; wrapStyleWord = true
+                        columns = 50; rows = (msg.lines().size + 1).coerceIn(3, 12)
+                    }
+                    javax.swing.JOptionPane.showMessageDialog(
+                        null, javax.swing.JScrollPane(area),
+                        "Render API error — Create service",
+                        javax.swing.JOptionPane.ERROR_MESSAGE
+                    )
+                    showMessage("Create failed.\nSee error dialog.")
+                    Timer(2500) { returnToIdle() }.apply { isRepeats = false; start() }
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -635,10 +753,20 @@ class RockyWidget(
                 lastDeployId = deployId
                 pollDeployStatus(apiKey, serviceId, deployId)
             } catch (e: Exception) {
+                val msg = e.message ?: "Unknown error"
                 SwingUtilities.invokeLater {
+                    val area = javax.swing.JTextArea(msg).apply {
+                        isEditable = false; lineWrap = true; wrapStyleWord = true
+                        columns = 50; rows = (msg.lines().size + 1).coerceIn(3, 12)
+                    }
+                    javax.swing.JOptionPane.showMessageDialog(
+                        null, javax.swing.JScrollPane(area),
+                        "Render API error — Trigger deploy",
+                        javax.swing.JOptionPane.ERROR_MESSAGE
+                    )
                     phase = RockyPhase.CD_READY
                     deployBtn.isEnabled = true
-                    showMessage("Deploy trigger failed.\nCheck JetFlo panel.")
+                    showMessage("Deploy failed.\nSee error dialog.")
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -655,11 +783,14 @@ class RockyWidget(
 
             if (status.isTerminal) {
                 SwingUtilities.invokeLater {
-                    phase = RockyPhase.CD_READY
-                    deployBtn.isEnabled   = true
-                    rollbackBtn.isVisible = status.isFailed
-                    if (status.isSuccess) setSpriteMode(SpriteMode.JAZZ)
-                    revalidate(); repaint()
+                    // Si el usuario no lo ha cancelado (volviendo a IDLE), le actualizamos los botones
+                    if (phase == RockyPhase.DEPLOYING) {
+                        phase = RockyPhase.CD_READY
+                        deployBtn.isEnabled   = true
+                        rollbackBtn.isVisible = status.isFailed
+                        if (status.isSuccess) setSpriteMode(SpriteMode.JAZZ)
+                        revalidate(); repaint()
+                    }
                 }
                 break
             }
@@ -667,6 +798,9 @@ class RockyWidget(
     }
 
     private fun updateDeployBubble(status: DeployStatus) {
+        // Solo actualizar el mensaje si seguimos en un estado relevante (no si el usuario lo canceló)
+        if (phase != RockyPhase.DEPLOYING && phase != RockyPhase.CD_READY) return
+
         val msg = when {
             status.isSuccess -> "Deploy successful! \nYou're live on Render!"
             status.isFailed  -> "Oh no! Deploy failed. ↩️\nPress Rollback to revert."
@@ -702,9 +836,19 @@ class RockyWidget(
                 lastDeployId = rollbackDeployId
                 pollDeployStatus(apiKey, serviceId, rollbackDeployId)
             } catch (e: Exception) {
+                val msg = e.message ?: "Unknown error"
                 SwingUtilities.invokeLater {
+                    val area = javax.swing.JTextArea(msg).apply {
+                        isEditable = false; lineWrap = true; wrapStyleWord = true
+                        columns = 50; rows = (msg.lines().size + 1).coerceIn(3, 12)
+                    }
+                    javax.swing.JOptionPane.showMessageDialog(
+                        null, javax.swing.JScrollPane(area),
+                        "Render API error — Rollback",
+                        javax.swing.JOptionPane.ERROR_MESSAGE
+                    )
                     rollbackBtn.isEnabled = true; deployBtn.isEnabled = true
-                    showMessage("Rollback failed.\nSee JetFlo panel.")
+                    showMessage("Rollback failed.\nSee error dialog.")
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -715,7 +859,7 @@ class RockyWidget(
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun reconfigureRender() {
-        RenderCredentialsStore.clearAll(project)
+        RenderCredentialsStore.clearAll(project)   // wipes key + serviceId
         deployBtn.isVisible   = false
         rollbackBtn.isVisible = false
         phase = RockyPhase.CD_PROMPT
@@ -806,27 +950,30 @@ class RockyWidget(
 
             val pillLabelCI = "Set up CI"
             val pillLabelCD = "Set up CD"
+            val pillLabelCB = "Code Bundle"
             val pillWCI     = fm.stringWidth(pillLabelCI) + pad * 2
             val pillWCD     = fm.stringWidth(pillLabelCD) + pad * 2
-            val pillsRowW   = pillWCI + pillGap + pillWCD
+            val pillWCB     = fm.stringWidth(pillLabelCB) + pad * 2
+            // Las tres píldoras en dos filas: CI y CD arriba, CB centrada abajo
+            val pillsRowW   = maxOf(pillWCI + pillGap + pillWCD, pillWCB)
 
             val textMaxW   = bubbleLines.maxOfOrNull { fm.stringWidth(it) } ?: 0
             val contentW   = if (isChoice) maxOf(textMaxW, pillsRowW) else textMaxW
             val bW         = (contentW + pad * 2).coerceAtLeast(80)
             val textBlockH = bubbleLines.size * fm.height + pad * 2
-            val bH         = if (isChoice) textBlockH + pillH + pillGap + pad else textBlockH
+            val bH         = if (isChoice) textBlockH + pillH * 2 + pillGap * 2 + pad else textBlockH
 
             val bX = ((width - bW) / 2).coerceAtLeast(2)
             val bY = (rY - bH - 12).coerceAtLeast(2)
 
-            // Fondo + borde
+// Fondo + borde
             g2.color = Color(255, 255, 255, 245)
             g2.fillRoundRect(bX, bY, bW, bH, cornerR, cornerR)
             g2.stroke = BasicStroke(1.5f)
             g2.color = Color(160, 100, 60, 90)
             g2.drawRoundRect(bX, bY, bW, bH, cornerR, cornerR)
 
-            // Texto (typewriter)
+// Texto (typewriter)
             g2.color = Color(30, 30, 30)
             bubbleLines.forEachIndexed { i, line ->
                 g2.drawString(
@@ -836,48 +983,54 @@ class RockyWidget(
                 )
             }
 
-            // ── Píldoras CI / CD ──────────────────────────────────────────────
             if (isChoice) {
-                val pillY  = bY + textBlockH + pillGap / 2
-                val startX = bX + (bW - pillsRowW) / 2
+                val row1Y  = bY + textBlockH + pillGap / 2
+                val row2Y  = row1Y + pillH + pillGap
+                val startX = bX + (bW - (pillWCI + pillGap + pillWCD)) / 2
 
-                // Píldora CI (morada)
+                // Píldora CI — marrón
                 val ciX     = startX
                 val ciColor = if (hoveredPill == "CI") Color(120, 70, 40) else Color(160, 100, 60)
                 g2.color = Color(160, 100, 60, 30)
-                g2.fillRoundRect(ciX + 2, pillY + 3, pillWCI, pillH, 14, 14)
+                g2.fillRoundRect(ciX + 2, row1Y + 3, pillWCI, pillH, 14, 14)
                 g2.color = ciColor
-                g2.fillRoundRect(ciX, pillY, pillWCI, pillH, 14, 14)
+                g2.fillRoundRect(ciX, row1Y, pillWCI, pillH, 14, 14)
                 g2.color = Color(255, 255, 255, 50)
-                g2.fillRoundRect(ciX + 2, pillY + 2, pillWCI - 4, pillH / 2 - 2, 12, 12)
+                g2.fillRoundRect(ciX + 2, row1Y + 2, pillWCI - 4, pillH / 2 - 2, 12, 12)
                 g2.color = Color.WHITE
-                g2.drawString(
-                    pillLabelCI,
-                    ciX + (pillWCI - fm.stringWidth(pillLabelCI)) / 2,
-                    pillY + (pillH + fm.ascent - fm.descent) / 2
-                )
-                ciPillRect = Rectangle(ciX, pillY, pillWCI, pillH)
+                g2.drawString(pillLabelCI, ciX + (pillWCI - fm.stringWidth(pillLabelCI)) / 2, row1Y + (pillH + fm.ascent - fm.descent) / 2)
+                ciPillRect = Rectangle(ciX, row1Y, pillWCI, pillH)
 
-                // Píldora CD (verde)
+                // Píldora CD — rojo
                 val cdX     = ciX + pillWCI + pillGap
                 val cdColor = if (hoveredPill == "CD") Color(150, 50, 50) else Color(190, 80, 70)
                 g2.color = Color(190, 80, 70, 30)
-                g2.fillRoundRect(cdX + 2, pillY + 3, pillWCD, pillH, 14, 14)
+                g2.fillRoundRect(cdX + 2, row1Y + 3, pillWCD, pillH, 14, 14)
                 g2.color = cdColor
-                g2.fillRoundRect(cdX, pillY, pillWCD, pillH, 14, 14)
+                g2.fillRoundRect(cdX, row1Y, pillWCD, pillH, 14, 14)
                 g2.color = Color(255, 255, 255, 50)
-                g2.fillRoundRect(cdX + 2, pillY + 2, pillWCD - 4, pillH / 2 - 2, 12, 12)
+                g2.fillRoundRect(cdX + 2, row1Y + 2, pillWCD - 4, pillH / 2 - 2, 12, 12)
                 g2.color = Color.WHITE
-                g2.drawString(
-                    pillLabelCD,
-                    cdX + (pillWCD - fm.stringWidth(pillLabelCD)) / 2,
-                    pillY + (pillH + fm.ascent - fm.descent) / 2
-                )
-                cdPillRect = Rectangle(cdX, pillY, pillWCD, pillH)
+                g2.drawString(pillLabelCD, cdX + (pillWCD - fm.stringWidth(pillLabelCD)) / 2, row1Y + (pillH + fm.ascent - fm.descent) / 2)
+                cdPillRect = Rectangle(cdX, row1Y, pillWCD, pillH)
+
+                // Píldora CB — azul centrada en segunda fila
+                val cbX     = bX + (bW - pillWCB) / 2
+                val cbColor = if (hoveredPill == "CB") Color(30, 80, 160) else Color(50, 120, 200)
+                g2.color = Color(50, 120, 200, 30)
+                g2.fillRoundRect(cbX + 2, row2Y + 3, pillWCB, pillH, 14, 14)
+                g2.color = cbColor
+                g2.fillRoundRect(cbX, row2Y, pillWCB, pillH, 14, 14)
+                g2.color = Color(255, 255, 255, 50)
+                g2.fillRoundRect(cbX + 2, row2Y + 2, pillWCB - 4, pillH / 2 - 2, 12, 12)
+                g2.color = Color.WHITE
+                g2.drawString(pillLabelCB, cbX + (pillWCB - fm.stringWidth(pillLabelCB)) / 2, row2Y + (pillH + fm.ascent - fm.descent) / 2)
+                cbPillRect = Rectangle(cbX, row2Y, pillWCB, pillH)
 
             } else {
                 ciPillRect = null
                 cdPillRect = null
+                cbPillRect = null
             }
         }
 

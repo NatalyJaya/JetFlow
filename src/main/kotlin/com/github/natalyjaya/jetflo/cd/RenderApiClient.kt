@@ -45,6 +45,31 @@ object RenderApiClient {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    //  Owner — required for service creation
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns the ownerId (user or team) associated with [apiKey].
+     * Render requires this field when creating a new service.
+     *
+     * Calls GET /user and falls back to GET /owners if needed.
+     */
+    fun getOwnerId(apiKey: String): String {
+        // GET /v1/owners is the correct "List workspaces" endpoint.
+        // GET /v1/users returns { "email", "name" } with NO id field — unusable.
+        // Response shape: [ { "owner": { "id": "own-xxxx", "name": "...", ... } }, ... ]
+        val resp = get("$BASE/owners?limit=1", apiKey)
+        val arr  = JSONArray(resp)
+        if (arr.length() == 0) error("No workspaces found for this API key")
+        val first = arr.getJSONObject(0)
+        return if (first.has("owner")) {
+            first.getJSONObject("owner").getString("id")
+        } else {
+            first.getString("id")
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     //  Phase A — List existing services
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -90,27 +115,43 @@ object RenderApiClient {
         branch: String = "main",
         buildCmd: String = "",
         startCmd: String = "",
-        plan: String = "free"
+        plan: String = "free",
+        env: String = "node"
     ): String {
+        // FIX: ownerId is required by the Render API — fetch it first
+        val ownerId = getOwnerId(apiKey)
+
         val body = JSONObject().apply {
             put("type", "web_service")
             put("name", name)
+            put("ownerId", ownerId)
             put("autoDeploy", "yes")
+            put("repo", repoUrl)
+            put("branch", branch)
             put("serviceDetails", JSONObject().apply {
-                put("env", "docker")          // Render picks runtime from repo if omitted
+                put("env", env)
                 put("plan", plan)
                 put("region", "frankfurt")
                 put("numInstances", 1)
-                if (buildCmd.isNotBlank()) put("buildCommand", buildCmd)
-                if (startCmd.isNotBlank()) put("startCommand", startCmd)
                 put("pullRequestPreviewsEnabled", "no")
+                // Render requires buildCommand+startCommand inside envSpecificDetails
+                // for all non-docker, non-static runtimes
+                put("envSpecificDetails", JSONObject().apply {
+                    put("buildCommand", buildCmd.ifBlank { "echo 'no build step'" })
+                    put("startCommand", startCmd.ifBlank { defaultStartCommand(env) })
+                })
             })
-            put("repo", repoUrl)
-            put("branch", branch)
         }.toString()
 
         val resp = post("$BASE/services", apiKey, body)
-        return JSONObject(resp).getString("id")
+        // Guard: if response starts with '[' it's not a JSON object
+        if (resp.trimStart().startsWith("[")) {
+            error("createService unexpected response: $resp")
+        }
+        val respObj = JSONObject(resp)
+        // Render wraps the result: { "service": { "id": "..." }, "deployId": "..." }
+        return if (respObj.has("service")) respObj.getJSONObject("service").getString("id")
+        else respObj.getString("id")
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -123,8 +164,32 @@ object RenderApiClient {
      */
     fun triggerDeploy(apiKey: String, serviceId: String): String {
         val body = JSONObject().put("clearCache", "do_not_clear").toString()
-        val resp = post("$BASE/services/$serviceId/deploys", apiKey, body)
-        return JSONObject(resp).getString("id")
+        val resp = post("$BASE/services/$serviceId/deploys", apiKey, body).trim()
+
+        // Render sometimes returns 201 with an empty body — deploy was still triggered.
+        // Fall back to fetching the latest deploy id via the list endpoint.
+        if (resp.isEmpty()) {
+            val latest = getLatestDeploy(apiKey, serviceId)
+            return latest?.first ?: serviceId  // serviceId as last-resort sentinel
+        }
+
+        return try {
+            when {
+                resp.startsWith("[") -> {
+                    val arr = org.json.JSONArray(resp)
+                    val obj = arr.getJSONObject(0)
+                    if (obj.has("deploy")) obj.getJSONObject("deploy").getString("id")
+                    else obj.getString("id")
+                }
+                else -> {
+                    val obj = JSONObject(resp)
+                    if (obj.has("deploy")) obj.getJSONObject("deploy").getString("id")
+                    else obj.getString("id")
+                }
+            }
+        } catch (e: Exception) {
+            error("triggerDeploy parse failed.\nRaw response was:\n\n$resp\n\nParse error: ${e.message}")
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -135,19 +200,18 @@ object RenderApiClient {
      * Returns the current status of a single deploy.
      */
     fun getDeployStatus(apiKey: String, serviceId: String, deployId: String): DeployStatus {
-        val resp = get("$BASE/services/$serviceId/deploys/$deployId", apiKey)
-        return DeployStatus.from(JSONObject(resp).optString("status", "unknown"))
+        val resp   = get("$BASE/services/$serviceId/deploys/$deployId", apiKey)
+        val obj    = JSONObject(resp)
+        val deploy = if (obj.has("deploy")) obj.getJSONObject("deploy") else obj
+        return DeployStatus.from(deploy.optString("status", "unknown"))
     }
 
-    /**
-     * Returns the most recent deploy for [serviceId], or null if none.
-     * Useful for monitoring a deploy triggered by a git push (Forma A).
-     */
     fun getLatestDeploy(apiKey: String, serviceId: String): Pair<String, DeployStatus>? {
         val resp = get("$BASE/services/$serviceId/deploys?limit=1", apiKey)
         val arr  = JSONArray(resp)
         if (arr.length() == 0) return null
-        val obj  = arr.getJSONObject(0)
+        val raw  = arr.getJSONObject(0)
+        val obj  = if (raw.has("deploy")) raw.getJSONObject("deploy") else raw
         return obj.getString("id") to DeployStatus.from(obj.optString("status", "unknown"))
     }
 
@@ -164,7 +228,6 @@ object RenderApiClient {
      * @return The new rollback deployId, or null if no suitable previous deploy exists.
      */
     fun rollback(apiKey: String, serviceId: String, failedDeployId: String): String? {
-        // Find the last successful deploy (LIVE) that isn't the failed one
         val resp   = get("$BASE/services/$serviceId/deploys?limit=20", apiKey)
         val arr    = JSONArray(resp)
         val target = (0 until arr.length())
@@ -176,13 +239,26 @@ object RenderApiClient {
 
         val targetDeployId = target.getString("id")
 
-        // Official rollback endpoint — redeploys that exact image/commit
         val rollbackResp = post(
             "$BASE/services/$serviceId/deploys/$targetDeployId/rollback",
             apiKey,
             "{}"
         )
         return JSONObject(rollbackResp).getString("id")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private fun defaultStartCommand(env: String) = when (env) {
+        "node"   -> "node index.js"
+        "python" -> "gunicorn app:app"
+        "ruby"   -> "bundle exec ruby app.rb"
+        "go"     -> "./main"
+        "rust"   -> "./target/release/app"
+        "elixir" -> "mix run --no-halt"
+        else     -> "echo 'set your start command'"
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -197,20 +273,36 @@ object RenderApiClient {
             connectTimeout = 10_000
             readTimeout    = 15_000
         }
-        return conn.inputStream.bufferedReader().readText()
+        return conn.readResponseOrThrow()
     }
 
     private fun post(url: String, apiKey: String, body: String): String {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            setRequestProperty("Authorization", "Bearer $apiKey")
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Accept", "application/json")
-            connectTimeout = 10_000
-            readTimeout    = 15_000
-            doOutput = true
-            outputStream.bufferedWriter().use { it.write(body) }
-        }
-        return conn.inputStream.bufferedReader().readText()
+        // Do NOT access outputStream inside apply{} — it triggers the connection
+        // immediately and HttpURLConnection throws a generic IOException on 4xx
+        // before readResponseOrThrow can intercept and read the real error body.
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.setRequestProperty("Authorization", "Bearer $apiKey")
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("Accept", "application/json")
+        conn.connectTimeout = 10_000
+        conn.readTimeout    = 15_000
+        conn.doOutput       = true
+        conn.outputStream.bufferedWriter().use { it.write(body) }
+        return conn.readResponseOrThrow()
+    }
+
+    /**
+     * FIX: Always read from errorStream on 4xx/5xx so the actual API error
+     * message (e.g. "ownerId is required") is surfaced instead of a generic
+     * IOException("Server returned HTTP response code: 400").
+     */
+    private fun HttpURLConnection.readResponseOrThrow(): String {
+        val code    = responseCode          // finalises the request
+        val isError = code >= 400
+        val text    = (if (isError) errorStream else inputStream)
+            ?.bufferedReader()?.readText() ?: ""
+        if (isError) error("Render API error $code: $text")
+        return text
     }
 }
