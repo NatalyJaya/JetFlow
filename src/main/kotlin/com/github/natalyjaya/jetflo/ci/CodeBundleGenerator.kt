@@ -52,7 +52,7 @@ class CodeBundleGenerator(private val project: Project) {
                     LocalFileSystem.getInstance().refreshAndFindFileByIoFile(outputFile)?.let { vf ->
                         VfsUtil.markDirtyAndRefresh(false, false, false, vf)
                     }
-                    RockyWidget.instance?.showMessage("Done! 📦\nCheck CODEBUNDLE.md")
+                    RockyWidget.instance?.showMessage("Done!\nCheck CODEBUNDLE.md")
                     onFinished?.invoke()
                 }
 
