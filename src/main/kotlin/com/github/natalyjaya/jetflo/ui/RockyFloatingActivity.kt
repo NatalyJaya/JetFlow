@@ -78,7 +78,6 @@ private enum class RockyPhase {
     CD_READY,   // Deploy button visible
     DEPLOYING,  // Deploy en curso
     BUNDLING    // Code Bundle Prompt
-
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,7 +196,7 @@ class RockyWidget(
         startWalking()
 
         // Registrar instancia para el CI poller
-        instance = this
+        Companion.instance = this
 
         // Clic en Rocky (IDLE) → menú; clic en píldoras (CHOICE) → elección
         addMouseListener(object : MouseAdapter() {
@@ -209,6 +208,8 @@ class RockyWidget(
                         else if (cdPillRect?.contains(e.point) == true) onChooseCD()
                         else if (cbPillRect?.contains(e.point) == true) onChooseCB()
                     }
+                    // Permitir cancelar haciendo clic en Rocky en cualquier momento
+                    RockyPhase.CD_READY, RockyPhase.CI, RockyPhase.DEPLOYING -> returnToIdle()
                     else -> {}
                 }
             }
@@ -228,12 +229,6 @@ class RockyWidget(
                 if (hoveredPill != prev) repaint()
             }
         })
-
-        if (RenderCredentialsStore.isConfigured(project)) {
-            phase = RockyPhase.CD_READY
-            setSpriteMode(SpriteMode.STAND)
-            showCdReadyUi()
-        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -294,7 +289,6 @@ class RockyWidget(
             if (walkX >= maxX) {
                 walkX = maxX
                 walkDirection = -1
-                // Girar sprite (walk frames hacia la otra dirección)
             } else if (walkX <= MARGIN) {
                 walkX = MARGIN.toFloat()
                 walkDirection = 1
@@ -358,6 +352,41 @@ class RockyWidget(
     private fun onChooseCD() {
         idleTimer?.stop()
         resetPills()
+
+        // Si detecta que ya lo configuraste en el pasado (caché del IDE)
+        if (RenderCredentialsStore.isConfigured(project)) {
+            val options = arrayOf("🚀 Deploy now", "⚙️ Re-link service", "❌ Cancel")
+            val choice = JOptionPane.showOptionDialog(
+                null,
+                "This project is already linked to a Render service.\nWhat would you like to do?",
+                "CD Already Configured",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
+                null, options, options[0]
+            )
+
+            when (choice) {
+                0 -> {
+                    // Quiere hacer deploy directamente
+                    phase = RockyPhase.CD_READY
+                    setSpriteMode(SpriteMode.JAZZ)
+                    showMessage("All set!\nReady to deploy.") {
+                        showCdReadyUi()
+                    }
+                    return
+                }
+                1 -> {
+                    // Eligió "Re-link", dejamos que el código siga bajando
+                    // para que vuelva a cargar los servicios y muestre las opciones.
+                }
+                else -> {
+                    // Eligió Cancelar o cerró la ventana
+                    returnToIdle()
+                    return
+                }
+            }
+        }
+
+        // Inicia el flujo normal (pide API Key si no la tiene, y muestra las opciones)
         phase = RockyPhase.CD_PROMPT
         setSpriteMode(SpriteMode.STAND)
         showMessage("Let's configure\nyour deployment!") {
@@ -386,6 +415,10 @@ class RockyWidget(
         isTalking   = false
         bubbleLines = emptyList()
         resetPills()
+        deployBtn.isVisible = false
+        rollbackBtn.isVisible = false
+        stackCombo.isVisible = false
+        applyBtn.isVisible = false
         setSpriteMode(SpriteMode.WALK)
         startWalking()
         repaint()
@@ -420,6 +453,7 @@ class RockyWidget(
                         setSpriteMode(SpriteMode.STAND)
                         stackCombo.removeAllItems()
                         stackCombo.addItem("— Select a stack —")
+                        stackCombo.addItem("❌ Cancel")
                         names.forEach { stackCombo.addItem(it) }
                         stackCombo.isVisible = true; applyBtn.isVisible = true
                         stackCombo.isEnabled = true; applyBtn.isEnabled = true
@@ -429,7 +463,10 @@ class RockyWidget(
                 }
             } catch (e: Exception) {
                 SwingUtilities.invokeLater {
-                    if (phase == RockyPhase.CI) showMessage("GitHub connection failed")
+                    if (phase == RockyPhase.CI) {
+                        showMessage("GitHub connection failed")
+                        Timer(2000) { returnToIdle() }.apply { isRepeats = false; start() }
+                    }
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -438,6 +475,11 @@ class RockyWidget(
     private fun onApply() {
         val selected = stackCombo.selectedItem as? String ?: return
         if (selected.startsWith("—")) return
+        if (selected == "❌ Cancel") {
+            returnToIdle()
+            return
+        }
+
         isLoading = true; applyBtn.isEnabled = false
         showMessage("Setting up $selected CI...")
 
@@ -451,13 +493,10 @@ class RockyWidget(
                     stackCombo.isVisible = false
                     applyBtn.isVisible   = false
 
-                    // ── CI terminado: jazz y vuelve a IDLE ────────────────────
-                    // NO redirige a CD — el usuario lo pedirá cuando quiera
                     setSpriteMode(SpriteMode.JAZZ)
                     showMessage("CI is live! \nClick me again for CD.") {
                         Timer(1000) {
-                            phase = RockyPhase.IDLE
-                            setSpriteMode(SpriteMode.WALK)
+                            returnToIdle()
                         }.apply { isRepeats = false; start() }
                     }
                 }
@@ -501,13 +540,13 @@ class RockyWidget(
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE
             )
             if (res != JOptionPane.OK_OPTION) {
-                showMessage("No worries!\nYou can set it later in JetFlo panel.")
+                showMessage("No worries!\nYou can set it later.")
                 returnToIdle()
                 return@Timer
             }
             val key = String(field.password).trim()
             if (key.isBlank()) {
-                showMessage("No key entered.\nOpen JetFlo panel to try again.")
+                showMessage("No key entered.\nTry again later.")
                 returnToIdle()
                 return@Timer
             }
@@ -525,11 +564,6 @@ class RockyWidget(
                 val services = RenderApiClient.listServices(apiKey)
 
                 SwingUtilities.invokeLater {
-                    if (services.isEmpty()) {
-                        showCreateServiceDialog(apiKey)
-                        return@invokeLater
-                    }
-
                     val match = services.firstOrNull {
                         it.name.equals(project.name, ignoreCase = true)
                     }
@@ -547,30 +581,51 @@ class RockyWidget(
                         }
                     }
 
-                    val options = arrayOf("Link existing service", "Create new on Render", "Skip for now")
-                    when (JOptionPane.showOptionDialog(
+                    // Menú dinámico dependiendo de si hay servicios o no
+                    val options = if (services.isEmpty()) {
+                        arrayOf("✨ Create new on Render", "❌ Exit")
+                    } else {
+                        arrayOf("🔗 Link existing service", "✨ Create new on Render", "❌ Exit")
+                    }
+
+                    val choice = JOptionPane.showOptionDialog(
                         null,
                         "Which Render service should I deploy to?",
                         "Pick a Render Service",
                         JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
                         null, options, options[0]
-                    )) {
-                        0 -> {
-                            val names  = services.map { it.name }.toTypedArray()
-                            val chosen = JOptionPane.showInputDialog(
-                                null, "Select the service:", "Link Service",
-                                JOptionPane.PLAIN_MESSAGE, null, names, names[0]
-                            ) as? String ?: return@invokeLater
-                            val svc = services.first { it.name == chosen }
-                            bindService(svc.id, svc.name)
+                    )
+
+                    if (services.isEmpty()) {
+                        when (choice) {
+                            0 -> showCreateServiceDialog(apiKey)
+                            else -> { showMessage("OK! Click me again\nto deploy later."); returnToIdle() }
                         }
-                        1    -> showCreateServiceDialog(apiKey)
-                        else -> { showMessage("OK! Click me again\nto deploy later."); returnToIdle() }
+                    } else {
+                        when (choice) {
+                            0 -> {
+                                val names  = services.map { it.name }.toTypedArray()
+                                val chosen = JOptionPane.showInputDialog(
+                                    null, "Select the service:", "Link Service",
+                                    JOptionPane.PLAIN_MESSAGE, null, names, names[0]
+                                ) as? String
+
+                                if (chosen == null) {
+                                    returnToIdle()
+                                    return@invokeLater
+                                }
+                                val svc = services.first { it.name == chosen }
+                                bindService(svc.id, svc.name)
+                            }
+                            1 -> showCreateServiceDialog(apiKey)
+                            else -> { showMessage("OK! Click me again\nto deploy later."); returnToIdle() }
+                        }
                     }
                 }
             } catch (e: Exception) {
                 SwingUtilities.invokeLater {
-                    showMessage("Render API error.\nCheck your key in JetFlo panel.")
+                    showMessage("Render API error.\nCheck your key.")
+                    Timer(2000) { returnToIdle() }.apply { isRepeats = false; start() }
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -601,6 +656,7 @@ class RockyWidget(
         val repo = repoField.text.trim()
         if (name.isBlank() || repo.isBlank()) {
             showMessage("Name and repo are required.")
+            returnToIdle()
             return
         }
 
@@ -609,7 +665,7 @@ class RockyWidget(
         Thread {
             try {
                 val serviceId = RenderApiClient.createService(
-                    apiKey   = apiKey,
+                    apiKey="***REDACTED***",
                     name     = name,
                     repoUrl  = repo,
                     branch   = branchField.text.trim().ifBlank { "main" }
@@ -617,7 +673,8 @@ class RockyWidget(
                 SwingUtilities.invokeLater { bindService(serviceId, name) }
             } catch (e: Exception) {
                 SwingUtilities.invokeLater {
-                    showMessage("Create failed.\nTry again in JetFlo panel.")
+                    showMessage("Create failed.\nTry again later.")
+                    Timer(2000) { returnToIdle() }.apply { isRepeats = false; start() }
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -661,7 +718,7 @@ class RockyWidget(
                 SwingUtilities.invokeLater {
                     phase = RockyPhase.CD_READY
                     deployBtn.isEnabled = true
-                    showMessage("Deploy trigger failed.\nCheck JetFlo panel.")
+                    showMessage("Deploy trigger failed.\nCheck Render panel.")
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -678,11 +735,14 @@ class RockyWidget(
 
             if (status.isTerminal) {
                 SwingUtilities.invokeLater {
-                    phase = RockyPhase.CD_READY
-                    deployBtn.isEnabled   = true
-                    rollbackBtn.isVisible = status.isFailed
-                    if (status.isSuccess) setSpriteMode(SpriteMode.JAZZ)
-                    revalidate(); repaint()
+                    // Si el usuario no lo ha cancelado (volviendo a IDLE), le actualizamos los botones
+                    if (phase == RockyPhase.DEPLOYING) {
+                        phase = RockyPhase.CD_READY
+                        deployBtn.isEnabled   = true
+                        rollbackBtn.isVisible = status.isFailed
+                        if (status.isSuccess) setSpriteMode(SpriteMode.JAZZ)
+                        revalidate(); repaint()
+                    }
                 }
                 break
             }
@@ -690,6 +750,9 @@ class RockyWidget(
     }
 
     private fun updateDeployBubble(status: DeployStatus) {
+        // Solo actualizar el mensaje si seguimos en un estado relevante (no si el usuario lo canceló)
+        if (phase != RockyPhase.DEPLOYING && phase != RockyPhase.CD_READY) return
+
         val msg = when {
             status.isSuccess -> "Deploy successful! \nYou're live on Render!"
             status.isFailed  -> "Oh no! Deploy failed. ↩️\nPress Rollback to revert."
@@ -727,7 +790,7 @@ class RockyWidget(
             } catch (e: Exception) {
                 SwingUtilities.invokeLater {
                     rollbackBtn.isEnabled = true; deployBtn.isEnabled = true
-                    showMessage("Rollback failed.\nSee JetFlo panel.")
+                    showMessage("Rollback failed.\nCheck your config.")
                 }
             }
         }.apply { isDaemon = true; start() }
