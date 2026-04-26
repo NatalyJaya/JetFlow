@@ -355,10 +355,12 @@ class RockyWidget(
 
         // Si detecta que ya lo configuraste en el pasado (caché del IDE)
         if (RenderCredentialsStore.isConfigured(project)) {
-            val options = arrayOf("🚀 Deploy now", "⚙️ Re-link service", "❌ Cancel")
+            val savedId = RenderCredentialsStore.getServiceId(project) ?: "?"
+            val options = arrayOf("🚀 Deploy now", "⚙️ Re-link service", "🗑️ Reset config", "❌ Cancel")
             val choice = JOptionPane.showOptionDialog(
                 null,
-                "This project is already linked to a Render service.\nWhat would you like to do?",
+                "This project is already linked to a Render service.\n" +
+                        "Saved service ID: $savedId\n\nWhat would you like to do?",
                 "CD Already Configured",
                 JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
                 null, options, options[0]
@@ -366,7 +368,7 @@ class RockyWidget(
 
             when (choice) {
                 0 -> {
-                    // Quiere hacer deploy directamente
+                    // Deploy directly with the saved serviceId
                     phase = RockyPhase.CD_READY
                     setSpriteMode(SpriteMode.JAZZ)
                     showMessage("All set!\nReady to deploy.") {
@@ -375,11 +377,19 @@ class RockyWidget(
                     return
                 }
                 1 -> {
-                    // Eligió "Re-link", dejamos que el código siga bajando
-                    // para que vuelva a cargar los servicios y muestre las opciones.
+                    // Re-link: clear stale serviceId so a phantom/failed previous
+                    // creation does not cause a 404 on the next deploy attempt.
+                    RenderCredentialsStore.clearServiceId(project)
+                    // fall through to startCdFlow below
+                }
+                2 -> {
+                    // Full reset: wipe API key + serviceId and start from scratch
+                    RenderCredentialsStore.clearAll(project)
+                    showMessage("Config cleared.\nLet's start fresh!")
+                    Timer(1500) { startCdFlow() }.apply { isRepeats = false; start() }
+                    return
                 }
                 else -> {
-                    // Eligió Cancelar o cerró la ventana
                     returnToIdle()
                     return
                 }
@@ -623,9 +633,19 @@ class RockyWidget(
                     }
                 }
             } catch (e: Exception) {
+                val msg = e.message ?: "Unknown error"
                 SwingUtilities.invokeLater {
-                    showMessage("Render API error.\nCheck your key.")
-                    Timer(2000) { returnToIdle() }.apply { isRepeats = false; start() }
+                    val area = javax.swing.JTextArea(msg).apply {
+                        isEditable = false; lineWrap = true; wrapStyleWord = true
+                        columns = 50; rows = (msg.lines().size + 1).coerceIn(3, 12)
+                    }
+                    javax.swing.JOptionPane.showMessageDialog(
+                        null, javax.swing.JScrollPane(area),
+                        "Render API error — List services",
+                        javax.swing.JOptionPane.ERROR_MESSAGE
+                    )
+                    showMessage("Render API error.\nSee error dialog.")
+                    Timer(2500) { returnToIdle() }.apply { isRepeats = false; start() }
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -633,13 +653,18 @@ class RockyWidget(
 
     private fun showCreateServiceDialog(apiKey: String) {
         val nameField   = JTextField(project.name)
-        val repoField   = JTextField("https://github.com/user/repo")
+        val repoField   = JTextField("https://github.com/NatalyJaya/Portfolio.git")
         val branchField = JTextField("main")
+
+        // Render requires an explicit runtime — these are the valid values
+        val runtimes = arrayOf("node", "python", "ruby", "go", "rust", "elixir", "docker", "image")
+        val runtimeCombo = JComboBox(runtimes).apply { selectedItem = "node" }
 
         val form = JPanel(GridLayout(0, 2, 6, 6)).apply {
             add(JLabel("Service name:")); add(nameField)
             add(JLabel("GitHub repo URL:")); add(repoField)
             add(JLabel("Branch:")); add(branchField)
+            add(JLabel("Runtime:")); add(runtimeCombo)
         }
 
         val res = JOptionPane.showConfirmDialog(
@@ -654,6 +679,8 @@ class RockyWidget(
 
         val name = nameField.text.trim()
         val repo = repoField.text.trim()
+        val env  = (runtimeCombo.selectedItem as? String) ?: "node"
+
         if (name.isBlank() || repo.isBlank()) {
             showMessage("Name and repo are required.")
             returnToIdle()
@@ -665,16 +692,27 @@ class RockyWidget(
         Thread {
             try {
                 val serviceId = RenderApiClient.createService(
-                    apiKey="***REDACTED***",
+                    apiKey   = apiKey,
                     name     = name,
                     repoUrl  = repo,
-                    branch   = branchField.text.trim().ifBlank { "main" }
+                    branch   = branchField.text.trim().ifBlank { "main" },
+                    env      = env
                 )
                 SwingUtilities.invokeLater { bindService(serviceId, name) }
             } catch (e: Exception) {
+                val msg = e.message ?: "Unknown error"
                 SwingUtilities.invokeLater {
-                    showMessage("Create failed.\nTry again later.")
-                    Timer(2000) { returnToIdle() }.apply { isRepeats = false; start() }
+                    val area = javax.swing.JTextArea(msg).apply {
+                        isEditable = false; lineWrap = true; wrapStyleWord = true
+                        columns = 50; rows = (msg.lines().size + 1).coerceIn(3, 12)
+                    }
+                    javax.swing.JOptionPane.showMessageDialog(
+                        null, javax.swing.JScrollPane(area),
+                        "Render API error — Create service",
+                        javax.swing.JOptionPane.ERROR_MESSAGE
+                    )
+                    showMessage("Create failed.\nSee error dialog.")
+                    Timer(2500) { returnToIdle() }.apply { isRepeats = false; start() }
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -715,10 +753,20 @@ class RockyWidget(
                 lastDeployId = deployId
                 pollDeployStatus(apiKey, serviceId, deployId)
             } catch (e: Exception) {
+                val msg = e.message ?: "Unknown error"
                 SwingUtilities.invokeLater {
+                    val area = javax.swing.JTextArea(msg).apply {
+                        isEditable = false; lineWrap = true; wrapStyleWord = true
+                        columns = 50; rows = (msg.lines().size + 1).coerceIn(3, 12)
+                    }
+                    javax.swing.JOptionPane.showMessageDialog(
+                        null, javax.swing.JScrollPane(area),
+                        "Render API error — Trigger deploy",
+                        javax.swing.JOptionPane.ERROR_MESSAGE
+                    )
                     phase = RockyPhase.CD_READY
                     deployBtn.isEnabled = true
-                    showMessage("Deploy trigger failed.\nCheck Render panel.")
+                    showMessage("Deploy failed.\nSee error dialog.")
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -788,9 +836,19 @@ class RockyWidget(
                 lastDeployId = rollbackDeployId
                 pollDeployStatus(apiKey, serviceId, rollbackDeployId)
             } catch (e: Exception) {
+                val msg = e.message ?: "Unknown error"
                 SwingUtilities.invokeLater {
+                    val area = javax.swing.JTextArea(msg).apply {
+                        isEditable = false; lineWrap = true; wrapStyleWord = true
+                        columns = 50; rows = (msg.lines().size + 1).coerceIn(3, 12)
+                    }
+                    javax.swing.JOptionPane.showMessageDialog(
+                        null, javax.swing.JScrollPane(area),
+                        "Render API error — Rollback",
+                        javax.swing.JOptionPane.ERROR_MESSAGE
+                    )
                     rollbackBtn.isEnabled = true; deployBtn.isEnabled = true
-                    showMessage("Rollback failed.\nCheck your config.")
+                    showMessage("Rollback failed.\nSee error dialog.")
                 }
             }
         }.apply { isDaemon = true; start() }
@@ -801,7 +859,7 @@ class RockyWidget(
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun reconfigureRender() {
-        RenderCredentialsStore.clearAll(project)
+        RenderCredentialsStore.clearAll(project)   // wipes key + serviceId
         deployBtn.isVisible   = false
         rollbackBtn.isVisible = false
         phase = RockyPhase.CD_PROMPT
