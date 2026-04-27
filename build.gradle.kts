@@ -25,7 +25,7 @@ dependencies {
         // necesario para usar GitVcs.getKey() en VcsCheckinHandlerFactory
         bundledPlugin("Git4Idea")
     }
-    implementation("org.json:json:20231013")
+    implementation("org.json:json:20251224")
 }
 
 intellijPlatform {
